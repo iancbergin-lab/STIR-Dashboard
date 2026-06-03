@@ -1,0 +1,5 @@
+databento>=0.78.0
+pandas>=2.0.0
+numpy>=1.26.0
+plotly>=5.18.0
+requests>=2.31.0
