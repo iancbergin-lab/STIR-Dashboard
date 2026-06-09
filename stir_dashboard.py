@@ -157,6 +157,48 @@ def load_ref_rates(lookback_days: int = 90) -> pd.DataFrame:
     return pd.DataFrame({"effr": effr.reindex(idx), "sofr": sofr.reindex(idx)}).ffill()
 
 
+def load_breakevens(lookback_days: int = 90) -> pd.DataFrame:
+    """
+    Load TIPS breakeven inflation rates from FRED (no API key required).
+    T5YIE  : 5-Year Breakeven Inflation Rate
+    T5YIFR : 5-Year, 5-Year Forward Inflation Expectation Rate
+    Falls back to flat estimates if FRED is unreachable.
+    """
+    start_dt = date.today() - timedelta(days=lookback_days + 30)
+
+    def _fetch_fred(series_id: str) -> pd.Series | None:
+        try:
+            r = requests.get(
+                f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}",
+                timeout=10,
+            )
+            r.raise_for_status()
+            df = pd.read_csv(io.StringIO(r.text))
+            df.columns = ["date", "value"]
+            df["value"] = pd.to_numeric(df["value"], errors="coerce")
+            df.index   = pd.to_datetime(df["date"])
+            s = df["value"].dropna()
+            return s[s.index >= pd.Timestamp(start_dt)].tail(lookback_days)
+        except Exception:
+            return None
+
+    be5y   = _fetch_fred("T5YIE")
+    be5y5y = _fetch_fred("T5YIFR")
+
+    if be5y is None:
+        print("  (FRED unreachable -- using flat breakeven fallback: 5Y=2.30%, 5Y5Y=2.50%)")
+        idx    = pd.bdate_range(end=date.today(), periods=lookback_days)
+        be5y   = pd.Series(2.30, index=idx)
+        be5y5y = pd.Series(2.50, index=idx)
+
+    idx = be5y.index.union(be5y5y.index if be5y5y is not None else be5y.index)
+    return pd.DataFrame({
+        "be5y":   be5y.reindex(idx),
+        "be5y5y": (be5y5y.reindex(idx) if be5y5y is not None
+                   else pd.Series(dtype=float)),
+    }).ffill()
+
+
 def load_fomc_dates() -> list[date]:
     """FOMC meeting end-dates through end-2026. Source: federalreserve.gov"""
     return [
@@ -490,8 +532,29 @@ def _base_meeting_fig(path: pd.DataFrame, effr: float) -> go.Figure:
     return fig
 
 
-def plot_meeting_path(path: pd.DataFrame, effr: float) -> go.Figure:
+def plot_meeting_path(
+    path: pd.DataFrame,
+    effr: float,
+    be_now: float | None = None,
+) -> go.Figure:
     fig = _base_meeting_fig(path, effr)
+    if be_now is not None and not path.empty:
+        fig.add_trace(go.Scatter(
+            x=path["meeting"],
+            y=path["post_rate"] - be_now,
+            name=f"Implied real (nominal − {be_now:.2f}% BE)",
+            mode="lines+markers",
+            line=dict(color=CFR["green"], width=1.8, dash="dot", shape="hv"),
+            marker=dict(color=CFR["bg"],
+                        line=dict(color=CFR["green"], width=1.5),
+                        size=7),
+            hovertemplate="%{x|%Y-%m-%d}<br>Implied real: %{y:.2f}%<extra></extra>",
+        ))
+        fig.add_hline(
+            y=0, line_dash="dash", line_color="#333", line_width=0.8,
+            annotation_text="0% real", annotation_position="right",
+            annotation_font=dict(color="#555", size=9),
+        )
     fig.update_layout(title=dict(
         text="MEETINGS -- IMPLIED POST-MEETING RATE PATH",
         font=dict(color=CFR["orange"], family="Bahnschrift", size=18),
@@ -530,6 +593,106 @@ def plot_cb_lvl(path: pd.DataFrame, effr: float) -> go.Figure:
     return fig
 
 
+def plot_real_rates(
+    ref_rates:  pd.DataFrame,
+    breakevens: pd.DataFrame,
+    path:       pd.DataFrame,
+    ocr:        float,
+) -> go.Figure:
+    """
+    Tab: Real Rates
+    Historical: nominal EFFR (orange), 5Y TIPS breakeven (green),
+                real rate = EFFR − breakeven (red).
+    Forward:    ZQ-implied nominal path (dashed orange),
+                implied real path = nominal − current breakeven (dashed green).
+    """
+    # Align historical series
+    hist = pd.DataFrame({
+        "nominal": ref_rates["effr"],
+        "be5y":    breakevens["be5y"],
+    }).dropna()
+    hist["real"] = hist["nominal"] - hist["be5y"]
+
+    be_now      = float(breakevens["be5y"].iloc[-1])
+    real_now    = ocr - be_now
+
+    fig = go.Figure()
+
+    # ── Historical lines ──────────────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=hist.index, y=hist["nominal"],
+        name="Nominal EFFR",
+        line=dict(color=CFR["orangeHot"], width=2.2),
+        hovertemplate="%{x|%b %d %Y}<br>Nominal: %{y:.2f}%<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hist.index, y=hist["be5y"],
+        name="5Y TIPS Breakeven",
+        line=dict(color=CFR["green"], width=1.8),
+        hovertemplate="%{x|%b %d %Y}<br>5Y breakeven: %{y:.2f}%<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hist.index, y=hist["real"],
+        name="Real Rate (EFFR − 5Y BE)",
+        line=dict(color=CFR["red"], width=1.8),
+        hovertemplate="%{x|%b %d %Y}<br>Real: %{y:.2f}%<extra></extra>",
+    ))
+
+    # ── Forward implied paths (from ZQ meeting path) ──────────────────────────
+    if not path.empty:
+        fig.add_trace(go.Scatter(
+            x=path["meeting"], y=path["post_rate"],
+            name="Implied Nominal (ZQ path)",
+            mode="lines+markers",
+            line=dict(color=CFR["orangeHot"], width=1.6, dash="dot", shape="hv"),
+            marker=dict(size=6, color=CFR["bg"],
+                        line=dict(color=CFR["orangeHot"], width=1.5)),
+            hovertemplate="%{x|%b %d %Y}<br>Fwd nominal: %{y:.2f}%<extra></extra>",
+        ))
+        fig.add_trace(go.Scatter(
+            x=path["meeting"], y=path["post_rate"] - be_now,
+            name=f"Implied Real (nominal − {be_now:.2f}% BE)",
+            mode="lines+markers",
+            line=dict(color=CFR["green"], width=1.6, dash="dot", shape="hv"),
+            marker=dict(size=6, color=CFR["bg"],
+                        line=dict(color=CFR["green"], width=1.5)),
+            hovertemplate="%{x|%b %d %Y}<br>Fwd real: %{y:.2f}%<extra></extra>",
+        ))
+
+    # ── Reference lines ───────────────────────────────────────────────────────
+    fig.add_hline(
+        y=0, line_dash="dash", line_color="#333", line_width=0.8,
+        annotation_text="0% real", annotation_position="right",
+        annotation_font=dict(color="#555", size=9),
+    )
+    fig.add_hline(
+        y=real_now,
+        line_dash="dot", line_color=CFR["red"], line_width=0.8,
+        annotation_text=f"current real {real_now:+.2f}%",
+        annotation_position="right",
+        annotation_font=dict(color=CFR["red"], size=9),
+    )
+
+    fig.update_layout(
+        title=dict(
+            text="REAL RATES -- NOMINAL · BREAKEVEN · REAL (HISTORICAL + IMPLIED)",
+            font=dict(color=CFR["orange"], family="Bahnschrift", size=18),
+        ),
+        template="plotly_dark",
+        paper_bgcolor=CFR["bg"],
+        plot_bgcolor="#050505",
+        font=dict(family="Segoe UI", color=CFR["text"]),
+        yaxis_title="Rate (%)",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="left", x=0, font=dict(size=11),
+        ),
+        margin=dict(l=60, r=60, t=100, b=40),
+        height=520,
+    )
+    return fig
+
+
 # -- A6 END-TO-END DRIVER -----------------------------------------------------
 if __name__ == "__main__":
     TODAY = date.today()
@@ -545,6 +708,14 @@ if __name__ == "__main__":
     basis_bp = (SOFR_now - OCR) * 100
     print(f"OCR (EFFR) today : {OCR:.4f}%")
     print(f"SOFR spot        : {SOFR_now:.4f}%  (basis {basis_bp:+.1f} bp)")
+
+    # 2b. TIPS breakevens from FRED
+    print("Fetching TIPS breakevens from FRED ...")
+    breakevens = load_breakevens()
+    BE_NOW     = float(breakevens["be5y"].iloc[-1])
+    REAL_NOW   = OCR - BE_NOW
+    print(f"5Y TIPS breakeven: {BE_NOW:.4f}%")
+    print(f"Real rate (EFFR-BE): {REAL_NOW:+.4f}%")
 
     # 3. Futures strip
     #    Set env var DATABENTO_API_KEY to load real CME settlement prices.
@@ -583,8 +754,9 @@ if __name__ == "__main__":
     print(spread_matrix(ff_strip, OCR).to_string())
 
     # 9. Remaining figures
-    fig_path  = plot_meeting_path(path, OCR)
+    fig_path  = plot_meeting_path(path, OCR, be_now=BE_NOW)
     fig_cblvl = plot_cb_lvl(path, OCR)
+    fig_real  = plot_real_rates(ref_rates, breakevens, path, OCR)
 
     # 10. Build learning-guide HTML (5th tab -- static, no figure)
     LEARN_HTML = f"""
@@ -709,6 +881,54 @@ if __name__ == "__main__":
   </div>
 
   <div class="section">
+    <h3>Tab 5 &mdash; Real Rates</h3>
+    <p>This chart brings together three concepts on one canvas, covering both the past 90 days
+    and the market-implied future path:</p>
+    <table>
+      <thead><tr><th>Line</th><th>Colour</th><th>What it shows</th></tr></thead>
+      <tbody>
+        <tr><td>Nominal EFFR</td><td style="color:#FF9533">&#9644; orange solid</td><td>The actual overnight policy rate set by the Fed</td></tr>
+        <tr><td>5Y TIPS Breakeven</td><td style="color:#00E676">&#9644; green solid</td><td>What the bond market prices as average CPI inflation over the next 5 years</td></tr>
+        <tr><td>Real Rate</td><td style="color:#FF1744">&#9644; red solid</td><td>Nominal EFFR minus breakeven &mdash; the &ldquo;true&rdquo; cost of money after inflation</td></tr>
+        <tr><td>Implied Nominal (fwd)</td><td style="color:#FF9533">&#9148; orange dotted</td><td>Where ZQ futures imply the policy rate will be at each FOMC meeting</td></tr>
+        <tr><td>Implied Real (fwd)</td><td style="color:#00E676">&#9148; green dotted</td><td>Implied nominal minus today&rsquo;s breakeven &mdash; the real rate the market is pricing forward</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Why real rates matter:</strong> The Fed can set the nominal rate, but it is the
+    <em>real</em> rate that determines how restrictive or accommodative policy actually is for
+    borrowers, businesses, and asset prices. A nominal rate of 3.62% with 2.3% inflation
+    expectations implies a real rate of only +1.3% &mdash; mildly restrictive. The same nominal
+    rate with 3.5% inflation would be essentially neutral.</p>
+    <p><strong>What to look for:</strong></p>
+    <ul>
+      <li><strong>Real rate rising</strong> = policy tightening in real terms, even if the
+      nominal rate is unchanged (e.g. inflation expectations falling).</li>
+      <li><strong>Real rate below zero</strong> = deeply accommodative; money is cheap in
+      inflation-adjusted terms. This was the story of 2020&ndash;2022.</li>
+      <li><strong>Breakeven rising faster than EFFR</strong> = the market thinks the Fed is
+      behind the curve on inflation.</li>
+      <li><strong>Implied real path below zero at future meetings</strong> = the market
+      expects the Fed to ease into negative real territory &mdash; an unusual, stimulative
+      stance often associated with recession hedging.</li>
+    </ul>
+    <p><em>Note on the forward projection:</em> The dotted lines use today&rsquo;s 5Y breakeven
+    as a flat proxy for future inflation expectations. In reality breakevens will move; treat
+    the implied real path as a &ldquo;what if inflation stays here&rdquo; scenario rather than
+    a precise forecast.</p>
+  </div>
+
+  <div class="section">
+    <h3>Meeting Path &mdash; Real Rate Overlay</h3>
+    <p>The Meeting Path tab also now shows the real rate overlay (green dotted line) alongside
+    the nominal path. This makes it easy to see, meeting by meeting, whether the implied policy
+    stance is restrictive (real rate above zero) or accommodative (below zero), and how that
+    evolves across the hiking/cutting cycle.</p>
+    <p>The <strong>0% real</strong> dashed grey line acts as the neutral boundary. Policy dots
+    sitting well above it signal the market pricing in a prolonged restrictive stance; dots
+    crossing below it signal a pivot into accommodation.</p>
+  </div>
+
+  <div class="section">
     <h3>Data Sources &amp; Refresh</h3>
     <table>
       <thead><tr><th>Data</th><th>Source</th><th>Frequency</th></tr></thead>
@@ -716,6 +936,7 @@ if __name__ == "__main__":
         <tr><td>EFFR &amp; SOFR fixings</td><td>NY Fed public CSV API</td><td>Daily (T+1 business day)</td></tr>
         <tr><td>FOMC meeting calendar</td><td>Federal Reserve (hard-coded)</td><td>Annual refresh</td></tr>
         <tr><td>SR3 &amp; ZQ settlements</td><td>Databento / CME Globex</td><td>Daily close</td></tr>
+        <tr><td>5Y &amp; 5Y5Y TIPS breakevens</td><td>FRED (St. Louis Fed) &mdash; T5YIE, T5YIFR</td><td>Daily</td></tr>
         <tr><td>This page</td><td>Netlify build trigger</td><td>Hourly on weekdays</td></tr>
       </tbody>
     </table>
@@ -734,6 +955,7 @@ if __name__ == "__main__":
         ("FF Strip",     fig_ff),
         ("Meeting Path", fig_path),
         ("CB Lvl Rails", fig_cblvl),
+        ("Real Rates",   fig_real),
     ]
 
     # Serialise each figure to a div (plotly.js loaded once in <head>)
@@ -902,7 +1124,7 @@ if __name__ == "__main__":
 <body>
 <header>
   <h1>STIR Dashboard &mdash; Capital Flows Research</h1>
-  <p>EFFR {OCR:.4f}% &nbsp;|&nbsp; SOFR {SOFR_now:.4f}% &nbsp;|&nbsp; basis {basis_bp:+.1f} bp &nbsp;|&nbsp; {TODAY.isoformat()}</p>
+  <p>EFFR {OCR:.4f}% &nbsp;|&nbsp; SOFR {SOFR_now:.4f}% &nbsp;|&nbsp; basis {basis_bp:+.1f} bp &nbsp;|&nbsp; 5Y BE {BE_NOW:.2f}% &nbsp;|&nbsp; real {REAL_NOW:+.2f}% &nbsp;|&nbsp; {TODAY.isoformat()}</p>
 </header>
 <div class="tab-bar">
 {tab_buttons}
