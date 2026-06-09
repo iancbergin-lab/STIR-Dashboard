@@ -287,6 +287,12 @@ def load_strip_databento(api_key: str) -> pd.DataFrame:
         latest = df.sort_index().groupby(sym_col).last().reset_index()
         latest = latest[~latest[sym_col].str.contains(r"[:\s\-]", regex=True)]
 
+        # Diagnostic: print first 3 raw close prices to verify scale
+        sample = latest.head(3)
+        for _, sr in sample.iterrows():
+            raw_close = sr.get("close", "N/A")
+            print(f"  [diag] {root} {sr.get(sym_col,'?')} raw close={raw_close} type={type(raw_close).__name__}")
+
         for _, row in latest.iterrows():
             sym    = str(row[sym_col])
             expiry = _parse_expiry(sym)
