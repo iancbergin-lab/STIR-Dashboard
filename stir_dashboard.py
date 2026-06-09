@@ -626,6 +626,17 @@ def plot_real_rates(
                 & (hist["be5y"] > -2) & (hist["be5y"] < 15)]
     hist["real"] = hist["nominal"] - hist["be5y"]
 
+    print(f"  [diag] hist rows={len(hist)}")
+    if len(hist):
+        print(f"  [diag] nominal : {hist['nominal'].min():.4f} – {hist['nominal'].max():.4f}")
+        print(f"  [diag] be5y    : {hist['be5y'].min():.4f} – {hist['be5y'].max():.4f}")
+        print(f"  [diag] real    : {hist['real'].min():.4f} – {hist['real'].max():.4f}")
+        print(f"  [diag] index[0]: {hist.index[0]}  index[-1]: {hist.index[-1]}")
+    else:
+        print("  [diag] WARNING: hist is EMPTY after filtering")
+        print(f"  [diag] raw effr_s: {effr_s.iloc[:3].tolist()}")
+        print(f"  [diag] raw be5y_s: {be5y_s.iloc[:3].tolist()}")
+
     be_now      = float(breakevens["be5y"].iloc[-1])
     real_now    = ocr - be_now
 
@@ -730,6 +741,10 @@ if __name__ == "__main__":
     REAL_NOW   = OCR - BE_NOW
     print(f"5Y TIPS breakeven: {BE_NOW:.4f}%")
     print(f"Real rate (EFFR-BE): {REAL_NOW:+.4f}%")
+    print(f"  [diag] breakevens rows={len(breakevens)}, be5y range: {breakevens['be5y'].min():.4f}-{breakevens['be5y'].max():.4f}")
+    print(f"  [diag] be5y index[0]={breakevens.index[0]}  index[-1]={breakevens.index[-1]}")
+    print(f"  [diag] ref_rates rows={len(ref_rates)}, effr range: {ref_rates['effr'].min():.4f}-{ref_rates['effr'].max():.4f}")
+    print(f"  [diag] effr index[0]={ref_rates.index[0]}  index[-1]={ref_rates.index[-1]}")
 
     # 3. Futures strip
     #    Set env var DATABENTO_API_KEY to load real CME settlement prices.
