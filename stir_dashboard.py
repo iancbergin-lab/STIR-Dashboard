@@ -373,18 +373,39 @@ def find_terminal(strip_view: pd.DataFrame, ocr: float) -> pd.Series:
 
 
 def plot_strip(strip_view: pd.DataFrame, ocr: float, title: str) -> go.Figure:
-    term   = find_terminal(strip_view, ocr)
-    colors = [
-        CFR["orangeHot"] if s == term["symbol"] else CFR["orangeDim"]
-        for s in strip_view["symbol"]
-    ]
-    fig = go.Figure(go.Bar(
-        x=strip_view["symbol"],
-        y=strip_view["implied_rate"],
-        marker_color=colors,
-        marker_line_color="#9A4A02",
-        hovertemplate="%{x}<br>%{y:.3f}%<extra></extra>",
+    term = find_terminal(strip_view, ocr)
+
+    # Separate terminal from rest for distinct marker styling
+    mask_term = strip_view["symbol"] == term["symbol"]
+    rest  = strip_view[~mask_term]
+    t_row = strip_view[mask_term]
+
+    fig = go.Figure()
+    # Main curve: line + markers
+    fig.add_trace(go.Scatter(
+        x=rest["expiry"].tolist(),
+        y=rest["implied_rate"].tolist(),
+        mode="lines+markers",
+        name="Implied rate",
+        line=dict(color=CFR["orangeDim"], width=2),
+        marker=dict(color=CFR["orangeDim"], size=7,
+                    line=dict(color="#9A4A02", width=1)),
+        hovertemplate="%{customdata}<br>%{y:.3f}%<extra></extra>",
+        customdata=rest["symbol"].tolist(),
     ))
+    # Terminal contract: highlighted marker
+    if not t_row.empty:
+        fig.add_trace(go.Scatter(
+            x=t_row["expiry"].tolist(),
+            y=t_row["implied_rate"].tolist(),
+            mode="markers",
+            name=f"Terminal: {term['symbol']}",
+            marker=dict(color=CFR["orangeHot"], size=12,
+                        symbol="diamond",
+                        line=dict(color=CFR["orangeHot"], width=2)),
+            hovertemplate="%{customdata}<br>%{y:.3f}% (terminal)<extra></extra>",
+            customdata=t_row["symbol"].tolist(),
+        ))
     fig.add_hline(
         y=ocr,
         line_dash="dash",
@@ -393,17 +414,23 @@ def plot_strip(strip_view: pd.DataFrame, ocr: float, title: str) -> go.Figure:
         annotation_position="right",
         annotation_font=dict(color=CFR["orange"], family="Segoe UI"),
     )
+    # Tight y-axis around the curve
+    lo = min(ocr, strip_view["implied_rate"].min()) - 0.20
+    hi = max(ocr, strip_view["implied_rate"].max()) + 0.20
     fig.update_layout(
         title=dict(text=title, font=dict(color=CFR["orange"], family="Bahnschrift", size=18)),
         template="plotly_dark",
         paper_bgcolor=CFR["bg"],
         plot_bgcolor="#050505",
         font=dict(family="Segoe UI", color=CFR["text"]),
-        yaxis_title="Implied rate (%)",
-        xaxis_title=None,
+        yaxis=dict(title="Implied rate (%)", range=[round(lo, 2), round(hi, 2)]),
+        xaxis=dict(title=None, tickformat="%b '%y"),
         margin=dict(l=60, r=20, t=60, b=40),
         height=420,
         autosize=True,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    font=dict(size=11)),
     )
     return fig
 
@@ -582,10 +609,19 @@ def cb_levels(effr: float, band_bp: int = 100, step_bp: int = 25) -> list[float]
 def plot_cb_lvl(path: pd.DataFrame, effr: float) -> go.Figure:
     fig    = _base_meeting_fig(path, effr)
     settle = round(effr / 0.25) * 0.25
-    fig.update_layout(title=dict(
-        text="MEETINGS -- CB LVL POLICY RAILS",
-        font=dict(color=CFR["orange"], family="Bahnschrift", size=18),
-    ))
+    # Override y-axis to show the full rail range (±150bp from settled rate)
+    rail_lo = settle - 1.625   # 150bp below + a little padding
+    rail_hi = settle + 1.625
+    fig.update_layout(
+        title=dict(
+            text="MEETINGS -- CB LVL POLICY RAILS",
+            font=dict(color=CFR["orange"], family="Bahnschrift", size=18),
+        ),
+        yaxis=dict(
+            title="Implied post-meeting rate (%)",
+            range=[round(rail_lo, 2), round(rail_hi, 2)],
+        ),
+    )
     for lv in cb_levels(effr, band_bp=150):
         is_settle = abs(lv - settle) < 0.01
         fig.add_hline(
@@ -1105,6 +1141,15 @@ if __name__ == "__main__":
     all_tab_labels  = [label for label, _ in chart_tabs]
     all_tab_content = [div + expl for div, expl in zip(chart_divs, EXPLAINERS)]
 
+    # Derive the plotly.js CDN URL that matches the installed Python package.
+    # plotly>=6 uses a binary TypedArray format incompatible with plotly.js 2.x,
+    # so we must not use the generic "plotly-latest" CDN link.
+    import re as _re
+    _cdn_probe = to_html(go.Figure(), include_plotlyjs="cdn", full_html=False)
+    _cdn_match = _re.search(r'src=["\']([^"\']+plotly[^"\']+\.js[^"\']*)["\']', _cdn_probe)
+    PLOTLYJS_URL = (_cdn_match.group(1) if _cdn_match
+                    else "https://cdn.plot.ly/plotly-latest.min.js")
+
     tab_buttons = "\n".join(
         f'    <button class="tab-btn{" active" if i == 0 else ""}" '
         f'onclick="switchTab({i})">{label}</button>'
@@ -1121,7 +1166,7 @@ if __name__ == "__main__":
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STIR Dashboard -- Capital Flows Research</title>
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="{PLOTLYJS_URL}"></script>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
   body {{
