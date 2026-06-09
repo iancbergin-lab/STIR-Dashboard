@@ -403,6 +403,7 @@ def plot_strip(strip_view: pd.DataFrame, ocr: float, title: str) -> go.Figure:
         xaxis_title=None,
         margin=dict(l=60, r=20, t=60, b=40),
         height=420,
+        autosize=True,
     )
     return fig
 
@@ -528,6 +529,7 @@ def _base_meeting_fig(path: pd.DataFrame, effr: float) -> go.Figure:
         yaxis_title="Implied post-meeting rate (%)",
         margin=dict(l=60, r=40, t=60, b=40),
         height=420,
+        autosize=True,
     )
     return fig
 
@@ -606,11 +608,22 @@ def plot_real_rates(
     Forward:    ZQ-implied nominal path (dashed orange),
                 implied real path = nominal − current breakeven (dashed green).
     """
-    # Align historical series
+    # Align historical series — normalise both indices to date-only before joining
+    # so that NY Fed (business-day) and FRED (calendar-day) timestamps match.
+    effr_s = ref_rates["effr"].copy()
+    effr_s.index = pd.to_datetime(effr_s.index).normalize()
+    be5y_s = breakevens["be5y"].copy()
+    be5y_s.index = pd.to_datetime(be5y_s.index).normalize()
+
     hist = pd.DataFrame({
-        "nominal": ref_rates["effr"],
-        "be5y":    breakevens["be5y"],
-    }).dropna()
+        "nominal": effr_s,
+        "be5y":    be5y_s,
+    }).sort_index()
+    # Forward-fill across any 1-2 day gaps (e.g. FRED lags by one business day)
+    hist = hist.ffill().dropna()
+    # Sanity-clip: reject any row where either value looks unreasonable
+    hist = hist[(hist["nominal"] > 0) & (hist["nominal"] < 30)
+                & (hist["be5y"] > -2) & (hist["be5y"] < 15)]
     hist["real"] = hist["nominal"] - hist["be5y"]
 
     be_now      = float(breakevens["be5y"].iloc[-1])
@@ -689,6 +702,7 @@ def plot_real_rates(
         ),
         margin=dict(l=60, r=60, t=100, b=40),
         height=520,
+        autosize=True,
     )
     return fig
 
@@ -1074,7 +1088,8 @@ if __name__ == "__main__":
     # Serialise each figure to a div (plotly.js loaded once in <head>)
     from plotly.io import to_html
     chart_divs = [
-        to_html(fig, include_plotlyjs=False, full_html=False, div_id=f"chart{i}")
+        to_html(fig, include_plotlyjs=False, full_html=False, div_id=f"chart{i}",
+                config={"responsive": True})
         for i, (_, fig) in enumerate(chart_tabs)
     ]
 
@@ -1153,6 +1168,8 @@ if __name__ == "__main__":
                       border-color: {CFR["orange"]}; border-bottom-color: #0d0d0d; }}
   .tab-pane        {{ display: none; padding: 20px 24px; }}
   .tab-pane.active {{ display: block; }}
+  .tab-pane .js-plotly-plot,
+  .tab-pane .plotly-graph-div {{ width: 100% !important; }}
 
   /* ── Per-chart inline explainers ── */
   .explainer {{
