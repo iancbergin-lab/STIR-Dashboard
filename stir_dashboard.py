@@ -287,12 +287,6 @@ def load_strip_databento(api_key: str) -> pd.DataFrame:
         latest = df.sort_index().groupby(sym_col).last().reset_index()
         latest = latest[~latest[sym_col].str.contains(r"[:\s\-]", regex=True)]
 
-        # Diagnostic: print first 3 raw close prices to verify scale
-        sample = latest.head(3)
-        for _, sr in sample.iterrows():
-            raw_close = sr.get("close", "N/A")
-            print(f"  [diag] {root} {sr.get(sym_col,'?')} raw close={raw_close} type={type(raw_close).__name__}")
-
         for _, row in latest.iterrows():
             sym    = str(row[sym_col])
             expiry = _parse_expiry(sym)
@@ -513,11 +507,13 @@ def _base_meeting_fig(path: pd.DataFrame, effr: float) -> go.Figure:
     fig = go.Figure(go.Scatter(
         x=path["meeting"],
         y=path["post_rate"],
+        name="Implied Nominal",
         mode="lines+markers",
         line=dict(color=CFR["orangeHot"], width=2.4, shape="hv"),
         marker=dict(color=CFR["bg"],
                     line=dict(color=CFR["orangeHot"], width=1.5),
                     size=8),
+        hovertemplate="%{x|%Y-%m-%d}<br>Implied rate: %{y:.3f}%<extra></extra>",
     ))
     fig.add_hline(
         y=effr,
@@ -527,12 +523,19 @@ def _base_meeting_fig(path: pd.DataFrame, effr: float) -> go.Figure:
         annotation_position="right",
         annotation_font=dict(color=CFR["orange"]),
     )
+    # Set y-axis to focus on the relevant rate range rather than starting at 0
+    if not path.empty:
+        lo = min(effr, path["post_rate"].min()) - 0.30
+        hi = max(effr, path["post_rate"].max()) + 0.30
+        y_range = [round(lo - lo % 0.25, 2), round(hi + (0.25 - hi % 0.25) % 0.25, 2)]
+    else:
+        y_range = [effr - 1.0, effr + 1.0]
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor=CFR["bg"],
         plot_bgcolor="#050505",
         font=dict(family="Segoe UI", color=CFR["text"]),
-        yaxis_title="Implied post-meeting rate (%)",
+        yaxis=dict(title="Implied post-meeting rate (%)", range=y_range),
         margin=dict(l=60, r=40, t=60, b=40),
         height=420,
         autosize=True,
@@ -631,17 +634,6 @@ def plot_real_rates(
     hist = hist[(hist["nominal"] > 0) & (hist["nominal"] < 30)
                 & (hist["be5y"] > -2) & (hist["be5y"] < 15)]
     hist["real"] = hist["nominal"] - hist["be5y"]
-
-    print(f"  [diag] hist rows={len(hist)}")
-    if len(hist):
-        print(f"  [diag] nominal : {hist['nominal'].min():.4f} – {hist['nominal'].max():.4f}")
-        print(f"  [diag] be5y    : {hist['be5y'].min():.4f} – {hist['be5y'].max():.4f}")
-        print(f"  [diag] real    : {hist['real'].min():.4f} – {hist['real'].max():.4f}")
-        print(f"  [diag] index[0]: {hist.index[0]}  index[-1]: {hist.index[-1]}")
-    else:
-        print("  [diag] WARNING: hist is EMPTY after filtering")
-        print(f"  [diag] raw effr_s: {effr_s.iloc[:3].tolist()}")
-        print(f"  [diag] raw be5y_s: {be5y_s.iloc[:3].tolist()}")
 
     be_now      = float(breakevens["be5y"].iloc[-1])
     real_now    = ocr - be_now
@@ -747,10 +739,6 @@ if __name__ == "__main__":
     REAL_NOW   = OCR - BE_NOW
     print(f"5Y TIPS breakeven: {BE_NOW:.4f}%")
     print(f"Real rate (EFFR-BE): {REAL_NOW:+.4f}%")
-    print(f"  [diag] breakevens rows={len(breakevens)}, be5y range: {breakevens['be5y'].min():.4f}-{breakevens['be5y'].max():.4f}")
-    print(f"  [diag] be5y index[0]={breakevens.index[0]}  index[-1]={breakevens.index[-1]}")
-    print(f"  [diag] ref_rates rows={len(ref_rates)}, effr range: {ref_rates['effr'].min():.4f}-{ref_rates['effr'].max():.4f}")
-    print(f"  [diag] effr index[0]={ref_rates.index[0]}  index[-1]={ref_rates.index[-1]}")
 
     # 3. Futures strip
     #    Set env var DATABENTO_API_KEY to load real CME settlement prices.
