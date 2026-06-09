@@ -758,192 +758,305 @@ if __name__ == "__main__":
     fig_cblvl = plot_cb_lvl(path, OCR)
     fig_real  = plot_real_rates(ref_rates, breakevens, path, OCR)
 
-    # 10. Build learning-guide HTML (5th tab -- static, no figure)
-    LEARN_HTML = f"""
-<div class="learn">
-  <h2>How to Read This Dashboard</h2>
-  <p class="subtitle">A plain-English guide to STIR futures and what each chart is telling you.</p>
+    # 10. Per-chart inline explainers (appended below each chart in its tab)
+    _EXPL_SOFR = """
+<div class="explainer">
+  <h4>How to Read This Chart</h4>
+  <div class="expl-section">
+    <h5>What is SOFR?</h5>
+    <p><strong>SOFR</strong> stands for <strong>Secured Overnight Financing Rate</strong>.
+    Published daily by the New York Fed, it is the benchmark short-term interest rate for
+    the US dollar — the rate at which the largest institutions lend to each other overnight,
+    using US Treasury securities as collateral. Because these are real, observable transactions
+    (not estimates), SOFR is considered highly reliable. It replaced LIBOR in 2023 and is now
+    the foundation of trillions of dollars of financial contracts worldwide.</p>
+  </div>
+  <div class="expl-section">
+    <h5>What Are SR3 Futures?</h5>
+    <p><strong>SR3</strong> (CME 3-Month SOFR futures) are exchange-traded contracts that let
+    market participants bet on — or hedge against — where 3-month compounded SOFR will be in
+    the future. Each contract expires on an IMM date (the third Wednesday of March, June,
+    September, or December) and settles against the compounded daily SOFR over the 3-month
+    period ending on that date. With 8–12 quarterly expirations active at any time, the SR3
+    strip gives a clear market-implied view of short-term rates up to 2–3 years ahead.</p>
+  </div>
+  <div class="expl-section">
+    <h5>The 100-Minus-Rate Convention</h5>
+    <p>All STIR futures use the <strong>IMM price convention</strong>: price = 100 &minus;
+    implied rate. A price of <code>96.38</code> means the market expects the rate to be
+    <code>3.62%</code>. This inverse relationship means prices <em>rise</em> when cuts are
+    expected (toward 100) and <em>fall</em> when hikes are expected (away from 100). It can
+    feel counterintuitive at first — just remember: higher price = lower rate expectation.</p>
+  </div>
+  <div class="expl-section">
+    <h5>Reading the Bar Chart</h5>
+    <p>Each bar is one quarterly contract, arranged left to right from nearest to furthest
+    expiry. The bar height is the implied 3-month SOFR rate for that period. The
+    <strong>dashed orange line</strong> is today's Effective Federal Funds Rate (EFFR) —
+    the current policy anchor.</p>
+    <ul>
+      <li><strong>Bars below the line</strong> &rarr; cuts are priced in for that period</li>
+      <li><strong>Bars above the line</strong> &rarr; hikes are priced in</li>
+      <li><strong>Flat bars at the line</strong> &rarr; no change expected; policy on hold</li>
+    </ul>
+    <p>The <strong>bright orange bar</strong> marks the <em>terminal contract</em> — the
+    expiry where rates are expected to reach their extreme (highest in a hiking cycle, lowest
+    in a cutting cycle) before reversing. Every bar beyond it reflects the market's view of
+    the normalisation path back toward a neutral rate. A steep slope toward the terminal means
+    swift, decisive action is priced; a gentle slope means a slow, gradual path.</p>
+  </div>
+  <div class="expl-section">
+    <h5>SR3 vs ZQ — What Each Is Good For</h5>
+    <p>SR3 is quarterly; ZQ (the FF Strip tab) is monthly. Use SR3 for the big-picture
+    direction — where rates are heading over the next 1–3 years. Use ZQ for precision on
+    individual FOMC meeting dates. Together they cross-check each other: if the SR3 strip
+    is pricing deep cuts but the near-term ZQ contracts are flat, the market is saying
+    "eventually, but not yet."</p>
+  </div>
+</div>"""
 
-  <div class="section">
-    <h3>Background &mdash; What Are STIR Futures?</h3>
-    <p><strong>STIR</strong> stands for <em>Short-Term Interest Rate</em>. STIR futures are
-    exchange-traded contracts whose price is determined by where the market expects a benchmark
-    overnight rate to be at some future point in time. They are the most liquid real-time
-    indicator of central-bank policy expectations &mdash; far more granular than surveys or
-    analyst forecasts.</p>
-    <p>This dashboard tracks two products:</p>
+    _EXPL_FF = """
+<div class="explainer">
+  <h4>How to Read This Chart</h4>
+  <div class="expl-section">
+    <h5>What is the Fed Funds Rate?</h5>
+    <p>The <strong>Federal Funds Rate (FFR)</strong> is the interest rate at which US banks
+    lend their reserve balances to each other on an overnight basis. It is the primary lever
+    of US monetary policy — when the Fed "raises rates," it is adjusting its target range for
+    this rate. The <strong>Effective Federal Funds Rate (EFFR)</strong> is the volume-weighted
+    median of all actual overnight transactions, published each morning by the NY Fed. It
+    almost always sits within the Fed's target band (currently 25bp wide), making it a
+    reliable read of where policy actually stands day-to-day.</p>
+  </div>
+  <div class="expl-section">
+    <h5>What Are ZQ Futures?</h5>
+    <p><strong>ZQ</strong> (CME 30-Day Federal Funds futures) settle against the
+    <em>arithmetic average of the daily EFFR</em> across the entire calendar month of expiry.
+    With monthly contracts extending 18+ months forward, ZQ gives finer granularity than the
+    quarterly SR3 strip — crucially, each ZQ contract maps to exactly one calendar month, and
+    most FOMC meetings fall in a unique month. This makes ZQ the standard tool for extracting
+    exact per-meeting rate expectations.</p>
+  </div>
+  <div class="expl-section">
+    <h5>Why Monthly Settlement Matters for Meeting Analysis</h5>
+    <p>Suppose a Fed meeting falls on day 18 of a 30-day month. The ZQ contract for that
+    month settles against the full-month average, which is a weighted blend of 17 days at
+    the <em>pre-meeting</em> rate and 13 days at the <em>post-meeting</em> rate. Because
+    we know the number of days on each side, we can solve algebraically for the post-meeting
+    rate the market is pricing. That calculation is the foundation of the Meeting Path tab.</p>
+    <p>A practical consequence: if you see two adjacent ZQ bars that are nearly the same
+    height, it does <em>not</em> mean both months are priced identically. It may mean a
+    meeting-day effect in the second month is being masked by the pre-meeting days pulling
+    the average back toward the previous level.</p>
+  </div>
+  <div class="expl-section">
+    <h5>Reading the Chart</h5>
+    <p>Bars ordered left-to-right by expiry month. The <strong>dashed orange line</strong>
+    is today's EFFR. The <strong>bright orange bar</strong> is the terminal month — where
+    the monthly average rate peaks or troughs.</p>
+    <ul>
+      <li><strong>Sharp jump between adjacent monthly bars</strong> &rarr; a rate move is
+      priced specifically in the month where the jump occurs</li>
+      <li><strong>Gradual slope over several months</strong> &rarr; the market is hedging
+      between a move now or slightly later — no single meeting is fully priced</li>
+      <li><strong>Flat for several months then a drop</strong> &rarr; the market expects
+      the Fed to hold until a specific trigger, then cut swiftly</li>
+    </ul>
+  </div>
+  <div class="expl-section">
+    <h5>Comparing the ZQ and SR3 Strips</h5>
+    <p>The terminal rate implied by ZQ's near-term contracts should roughly match what SR3
+    prices for the same period. Persistent divergences between the two can signal: (1) a
+    SOFR-EFFR basis trade (the rates themselves are expected to diverge), or (2) a
+    technical supply/demand imbalance in one market. For policy direction purposes, treating
+    them as cross-checks is standard practice.</p>
+  </div>
+</div>"""
+
+    _EXPL_PATH = """
+<div class="explainer">
+  <h4>How to Read This Chart</h4>
+  <div class="expl-section">
+    <h5>What This Chart Shows</h5>
+    <p>The Meeting Path extracts the <strong>exact overnight rate the market implies
+    immediately after each FOMC meeting</strong>. This is different from the ZQ bar chart,
+    which shows monthly averages. By doing the weighted-day arithmetic, we isolate the
+    pure post-decision rate — removing the "noise" of pre-meeting days in the monthly
+    average and giving you a clean step-function view of the expected policy path.</p>
+  </div>
+  <div class="expl-section">
+    <h5>The Formula</h5>
+    <p>If a meeting falls on day <em>D</em> of a month with <em>N</em> days total, and the
+    ZQ contract for that month implies an average rate of <em>R</em>, then:</p>
+    <p><code>post_rate = (R &times; N &minus; (D&minus;1) &times; prev_rate) &divide; (N&minus;D+1)</code></p>
+    <p>Where <em>prev_rate</em> is the rate that prevailed before the meeting (taken from
+    the prior meeting's result, or today's EFFR for the first meeting). This isolates
+    exactly what rate must hold for the remaining days of the month to produce the observed
+    futures price.</p>
+  </div>
+  <div class="expl-section">
+    <h5>Reading the Step Function</h5>
+    <p>Each <strong>dot</strong> is one future FOMC meeting. The horizontal segments between
+    dots represent periods where no change is expected. Vertical steps at dots represent
+    priced-in moves:</p>
+    <ul>
+      <li><strong>Step downward</strong> at a meeting &rarr; a rate <em>cut</em> is priced
+      for that date</li>
+      <li><strong>Step upward</strong> &rarr; a rate <em>hike</em> is priced</li>
+      <li><strong>No step (dot at same level as previous)</strong> &rarr; the market
+      expects the Fed to hold at that meeting</li>
+      <li><strong>Dot between two 25bp levels</strong> &rarr; the market is split between
+      two outcomes (e.g. 60% chance of a cut, 40% hold)</li>
+    </ul>
+    <p>The gap between the <em>first dot</em> and the <strong>dashed EFFR line</strong> tells
+    you how much move is priced for the very next meeting. The gap between the <em>last dot</em>
+    and the EFFR line is the total cumulative easing or tightening priced across the entire
+    visible horizon.</p>
+  </div>
+  <div class="expl-section">
+    <h5>The Green Dotted Line &mdash; Implied Real Rate</h5>
+    <p>The <strong>green dotted line</strong> shows the <em>real rate</em> implied at each
+    meeting — calculated as the nominal post-meeting rate minus the current 5-year TIPS
+    breakeven inflation expectation. Real rates are what actually drive economic behaviour:
+    a 4% nominal rate with 3% inflation is only mildly restrictive in real terms; the same
+    4% rate with 1% inflation is very tight.</p>
+    <ul>
+      <li><strong>Green line above the grey 0% boundary</strong> &rarr; policy remains
+      restrictive in real terms after that meeting — the economy is still being squeezed</li>
+      <li><strong>Green line below 0%</strong> &rarr; the market prices genuinely
+      accommodative real rates — rare outside recessions or crisis responses</li>
+      <li><strong>Green and orange lines converging</strong> &rarr; breakevens are near
+      zero; the distinction between nominal and real policy barely matters (deflation risk)</li>
+    </ul>
+  </div>
+</div>"""
+
+    _EXPL_CBLVL = """
+<div class="explainer">
+  <h4>How to Read This Chart</h4>
+  <div class="expl-section">
+    <h5>Why the Rails Exist</h5>
+    <p>Central banks do not set rates to arbitrary decimal places. The Federal Reserve always
+    moves in <strong>25 basis point (0.25%) increments</strong> — so the possible outcomes
+    after any meeting are: unchanged, &plusmn;25bp, &plusmn;50bp (two moves in one meeting,
+    rare but it happens), etc. The horizontal dashed lines — the "rails" — mark every
+    reachable 25bp level within &plusmn;150bp of the current settled rate. The
+    <strong>solid bright orange line</strong> is today's policy rate rounded to the nearest
+    25bp: the rail the Fed is currently sitting on.</p>
+  </div>
+  <div class="expl-section">
+    <h5>How to Read Probability From Position</h5>
+    <p>Because rates can only land on rails, a meeting path dot that plots <em>between</em>
+    two rails represents a probability-weighted blend. The closer the dot is to a rail, the
+    higher the implied probability of that outcome:</p>
+    <ul>
+      <li><strong>Dot exactly on a rail</strong> &rarr; ~100% probability of landing there</li>
+      <li><strong>Dot exactly halfway between two rails</strong> &rarr; 50/50 split</li>
+      <li><strong>Dot 75% of the way to the next rail down</strong> &rarr; ~75% cut /
+      ~25% hold</li>
+    </ul>
+    <p>More precisely: <code>P(move to lower rail) = (current rate &minus; dot) &divide; 0.25</code>,
+    and <code>P(hold) = 1 &minus; P(move)</code>. This is exactly how CME FedWatch
+    probabilities are calculated from futures prices.</p>
+  </div>
+  <div class="expl-section">
+    <h5>Counting Moves Across the Cycle</h5>
+    <p>Follow the step-function from left to right. Each time the path drops through a rail,
+    one 25bp cut has been fully priced. Count the number of rails crossed to get the
+    <strong>total number of cuts (or hikes)</strong> priced to a given horizon. If the path
+    ends 3 rails below the starting orange line by year-end, the market is pricing
+    approximately 3&times;25bp = 75bp of cuts over that period.</p>
+    <p>Dots that hover stubbornly between the top two rails for multiple consecutive meetings
+    indicate the market is genuinely uncertain about the near-term path — high event risk,
+    data dependency, or mixed signals from the Fed.</p>
+  </div>
+  <div class="expl-section">
+    <h5>The Soft Landing Signal</h5>
+    <p>In a "soft landing" scenario — where the Fed cuts rates but avoids recession — the
+    cutting cycle typically ends with the path settling on a rail that still keeps the real
+    rate positive (above 0%). If the path stops two or three rails above the level that
+    would push real rates negative, the market believes the Fed will achieve a controlled
+    normalisation without being forced into emergency accommodation. If the path plunges
+    through that level, the market is hedging a harder landing.</p>
+  </div>
+</div>"""
+
+    _EXPL_REAL = """
+<div class="explainer">
+  <h4>How to Read This Chart</h4>
+  <div class="expl-section">
+    <h5>Nominal vs Real Rates &mdash; Why It Matters</h5>
+    <p>The <strong>nominal rate</strong> is the number the Fed announces — currently 3.62%.
+    But that number in isolation tells you very little about how tight or loose monetary policy
+    actually is. A 3.62% rate when inflation is running at 3.5% is nearly neutral — money is
+    barely more expensive than inflation, so borrowing costs are almost free in real terms.
+    The same 3.62% rate with 1% inflation is genuinely restrictive — businesses and households
+    are paying 2.6% above inflation to borrow. The <strong>real rate</strong> (nominal minus
+    inflation expectation) is what the economy actually feels.</p>
+  </div>
+  <div class="expl-section">
+    <h5>What TIPS Breakevens Measure</h5>
+    <p>A <strong>TIPS</strong> (Treasury Inflation-Protected Security) is a US government bond
+    whose principal automatically adjusts with CPI. The <strong>breakeven inflation rate</strong>
+    is calculated as: <code>nominal Treasury yield &minus; TIPS yield</code> for the same
+    maturity. If a 5-year nominal Treasury yields 4.5% and the 5-year TIPS yields 2.2%, the
+    5Y breakeven is 2.3%. This means the bond market is indifferent between the two bonds only
+    if average CPI inflation over 5 years turns out to be exactly 2.3%. If you expect more
+    inflation, TIPS wins; less, the nominal bond wins. The breakeven is therefore a continuous,
+    real-money market vote on where inflation is headed — updated every trading day.</p>
+  </div>
+  <div class="expl-section">
+    <h5>The Five Lines</h5>
     <table>
-      <thead><tr><th>Ticker</th><th>Product</th><th>Reference rate</th><th>Contract size</th></tr></thead>
+      <thead><tr><th>Line</th><th>What It Is</th></tr></thead>
       <tbody>
-        <tr><td>SR3</td><td>CME SOFR 3-Month</td><td>3-month compounded SOFR</td><td>$2,500 per 0.01 DV01</td></tr>
-        <tr><td>ZQ</td><td>CME 30-Day Fed Funds</td><td>Monthly average EFFR</td><td>$4,167 per 0.01 DV01</td></tr>
+        <tr><td><span style="color:#FF9533">&#9644; Orange solid</span></td><td><strong>Nominal EFFR</strong> — the actual daily policy rate over the past 90 days</td></tr>
+        <tr><td><span style="color:#00E676">&#9644; Green solid</span></td><td><strong>5Y TIPS Breakeven</strong> — market-implied inflation expectation, daily</td></tr>
+        <tr><td><span style="color:#FF1744">&#9644; Red solid</span></td><td><strong>Real Rate</strong> = EFFR &minus; breakeven. The inflation-adjusted cost of money</td></tr>
+        <tr><td><span style="color:#FF9533">&#9148; Orange dotted</span></td><td><strong>Implied nominal path</strong> — where ZQ futures say the policy rate will be at each future FOMC meeting</td></tr>
+        <tr><td><span style="color:#00E676">&#9148; Green dotted</span></td><td><strong>Implied real path</strong> = implied nominal &minus; today's breakeven. A &ldquo;what if inflation stays here&rdquo; projection</td></tr>
       </tbody>
     </table>
   </div>
-
-  <div class="section">
-    <h3>The IMM Price Convention</h3>
-    <p>Futures prices are quoted as <strong>100 minus the implied rate</strong>. So a price of
-    <code>96.38</code> means the market implies a rate of <code>100 &minus; 96.38 = 3.62%</code>.
-    This means:</p>
+  <div class="expl-section">
+    <h5>Key Signals to Watch</h5>
     <ul>
-      <li>Prices <strong>rise</strong> when the market expects <strong>rate cuts</strong>.</li>
-      <li>Prices <strong>fall</strong> when the market expects <strong>rate hikes</strong>.</li>
-    </ul>
-    <p>The dashed orange line on every strip chart shows the current Effective Federal Funds Rate
-    (EFFR). Bars above the line imply cuts are priced in; bars below imply hikes.</p>
-  </div>
-
-  <div class="section">
-    <h3>Tab 1 &mdash; SOFR Strip (SR3)</h3>
-    <p>Each bar represents one quarterly SR3 contract expiring on the IMM date of that month
-    (third Wednesday). The height of the bar is the <strong>implied 3-month SOFR rate</strong>
-    for that expiry window.</p>
-    <p><strong>The bright orange bar</strong> is the <em>terminal contract</em> &mdash; the
-    furthest point along the strip where the market expects rates to peak or trough before
-    reversing. Contracts beyond it start drifting back toward neutral.</p>
-    <p><strong>What to look for:</strong></p>
-    <ul>
-      <li>A strip sloping <em>downward</em> = market pricing in rate cuts.</li>
-      <li>A strip sloping <em>upward</em> = hikes expected.</li>
-      <li>A flat strip = no change expected, policy on hold.</li>
-      <li>The <em>steepness</em> of the slope reflects conviction &mdash; a steep curve means
-      large, rapid moves are priced; a gentle slope means a gradual path.</li>
+      <li><strong>Real rate climbing while the nominal rate is flat</strong> &rarr; inflation
+      expectations are falling. The Fed is getting tighter without doing anything &mdash;
+      sometimes called &ldquo;passive tightening.&rdquo; This happened in 2023 as inflation
+      fell faster than the Fed cut rates.</li>
+      <li><strong>Real rate turning sharply negative</strong> &rarr; policy is deeply
+      accommodative. Historically associated with the zero-lower-bound era (2009&ndash;2015,
+      2020&ndash;2022). Negative real rates are powerful stimulus — cheap money floods into
+      risk assets, housing, and investment.</li>
+      <li><strong>Breakeven rising faster than EFFR</strong> &rarr; the market thinks the
+      Fed is falling behind on inflation. If left unaddressed, the Fed may need to hike more
+      aggressively later to regain credibility.</li>
+      <li><strong>Implied real path staying comfortably positive at all future meetings</strong>
+      &rarr; the market believes the Fed's cutting cycle will be controlled and modest —
+      a textbook soft landing. Policy eases but never becomes stimulative.</li>
+      <li><strong>Implied real path crossing below zero in the forward section</strong> &rarr;
+      the market is hedging a scenario where the Fed is forced into emergency accommodation —
+      recession or financial-system stress.</li>
     </ul>
   </div>
-
-  <div class="section">
-    <h3>Tab 2 &mdash; Fed Funds Strip (ZQ)</h3>
-    <p>ZQ contracts settle against the <strong>monthly average EFFR</strong>, so each bar
-    represents the market's expectation for the average overnight rate across that calendar
-    month. Because FOMC decisions are instantaneous but ZQ settles on the monthly average,
-    you can arithmetically back out exactly what rate change is priced in for each meeting
-    (see Meeting Path tab).</p>
-    <p>ZQ is more granular than SR3 for near-term meeting analysis because it has monthly
-    expiries rather than quarterly.</p>
+  <div class="expl-section">
+    <h5>Caveat on the Forward Real Path</h5>
+    <p>The green dotted line holds today's breakeven <em>flat</em> into the future. In reality,
+    if the Fed cuts aggressively, inflation expectations may rise (more stimulus = more
+    inflation risk), which would push the real rate even lower than the dotted line shows.
+    Conversely, if rate cuts signal confidence in tamed inflation, breakevens may fall, making
+    the real rate less negative. Treat the dotted line as a baseline scenario, not a forecast.</p>
   </div>
+</div>"""
 
-  <div class="section">
-    <h3>Tab 3 &mdash; Meeting Path</h3>
-    <p>This chart extracts the <strong>implied post-meeting rate</strong> from each ZQ contract
-    that covers an FOMC meeting month. The formula is:</p>
-    <pre>post_rate = (contract_rate × days_in_month − pre_meeting_days × prev_rate)
-             ÷ post_meeting_days</pre>
-    <p>This isolates the overnight rate that must prevail <em>after</em> the meeting to produce
-    the observed futures price, given the rate that prevailed before the meeting.</p>
-    <p><strong>What to look for:</strong></p>
-    <ul>
-      <li>Each dot is one FOMC meeting. The step-function line shows the expected policy path.</li>
-      <li>A step <em>down</em> at a meeting = a cut is priced for that date.</li>
-      <li>A step <em>up</em> = a hike.</li>
-      <li>A flat line between meetings = no action expected.</li>
-      <li>The gap between dots and the orange EFFR line tells you how many total cuts or hikes
-      are priced by that meeting.</li>
-    </ul>
-  </div>
+    EXPLAINERS = [_EXPL_SOFR, _EXPL_FF, _EXPL_PATH, _EXPL_CBLVL, _EXPL_REAL]
 
-  <div class="section">
-    <h3>Tab 4 &mdash; CB Level Rails</h3>
-    <p>Central banks move rates in <strong>25 bp increments</strong>. The dotted horizontal
-    lines on this chart (the "rails") mark every 25 bp level within 150 bp of the current
-    settled rate. The solid bright orange line is the <em>current settled rate</em> (rounded
-    to the nearest 25 bp).</p>
-    <p>This overlay turns the meeting path into a probability map: the closer a meeting's dot
-    is to a rail, the higher the probability of that outcome. A dot exactly on the rail below
-    = 100% one-cut. A dot halfway between = 50/50 between hold and cut.</p>
-    <p><strong>FedWatch probabilities</strong> (printed in the terminal) are derived directly
-    from this geometry &mdash; they show the probability mass assigned to hold, &minus;25 bp,
-    &minus;50 bp, &minus;75 bp, and +25 bp at each meeting.</p>
-  </div>
+    # 10b. (standalone "How to Read This" tab removed -- explainers now inline below each chart)
 
-  <div class="section">
-    <h3>The EFFR / SOFR Basis</h3>
-    <p>The header shows EFFR, SOFR, and their basis (SOFR &minus; EFFR, in basis points).
-    In normal conditions SOFR trades a few bp <em>below</em> EFFR because SOFR is
-    collateralised (repo-backed) while EFFR reflects uncollateralised interbank lending.</p>
-    <ul>
-      <li><strong>Basis near zero</strong> = normal, plentiful reserves, no stress.</li>
-      <li><strong>Basis sharply negative</strong> = SOFR is cheap, repo markets are flush.</li>
-      <li><strong>Basis turning positive</strong> = unusual stress signal; SOFR pricing above
-      EFFR can indicate collateral scarcity or quarter-end pressure.</li>
-    </ul>
-  </div>
+    # 11. Save combined single-file dashboard with tabs -- NOTE: removed old LEARN_HTML block below
 
-  <div class="section">
-    <h3>Calendar Spreads (printed in terminal)</h3>
-    <p>The spread matrix shows the difference in implied rates between a ZQ contract and the
-    contract N months forward (+3M, +6M, +9M, +12M), expressed in <strong>basis points</strong>.
-    A positive spread means the forward rate is higher than the near rate &mdash; the market
-    expects rates to <em>rise</em> over that horizon. Negative spreads imply expected cuts.</p>
-    <p>Watch for <em>curve inversions</em>: when near-dated spreads are more negative than
-    far-dated ones, the market believes cuts will happen quickly and then stabilise &mdash;
-    a classic easing cycle shape.</p>
-  </div>
-
-  <div class="section">
-    <h3>Tab 5 &mdash; Real Rates</h3>
-    <p>This chart brings together three concepts on one canvas, covering both the past 90 days
-    and the market-implied future path:</p>
-    <table>
-      <thead><tr><th>Line</th><th>Colour</th><th>What it shows</th></tr></thead>
-      <tbody>
-        <tr><td>Nominal EFFR</td><td style="color:#FF9533">&#9644; orange solid</td><td>The actual overnight policy rate set by the Fed</td></tr>
-        <tr><td>5Y TIPS Breakeven</td><td style="color:#00E676">&#9644; green solid</td><td>What the bond market prices as average CPI inflation over the next 5 years</td></tr>
-        <tr><td>Real Rate</td><td style="color:#FF1744">&#9644; red solid</td><td>Nominal EFFR minus breakeven &mdash; the &ldquo;true&rdquo; cost of money after inflation</td></tr>
-        <tr><td>Implied Nominal (fwd)</td><td style="color:#FF9533">&#9148; orange dotted</td><td>Where ZQ futures imply the policy rate will be at each FOMC meeting</td></tr>
-        <tr><td>Implied Real (fwd)</td><td style="color:#00E676">&#9148; green dotted</td><td>Implied nominal minus today&rsquo;s breakeven &mdash; the real rate the market is pricing forward</td></tr>
-      </tbody>
-    </table>
-    <p><strong>Why real rates matter:</strong> The Fed can set the nominal rate, but it is the
-    <em>real</em> rate that determines how restrictive or accommodative policy actually is for
-    borrowers, businesses, and asset prices. A nominal rate of 3.62% with 2.3% inflation
-    expectations implies a real rate of only +1.3% &mdash; mildly restrictive. The same nominal
-    rate with 3.5% inflation would be essentially neutral.</p>
-    <p><strong>What to look for:</strong></p>
-    <ul>
-      <li><strong>Real rate rising</strong> = policy tightening in real terms, even if the
-      nominal rate is unchanged (e.g. inflation expectations falling).</li>
-      <li><strong>Real rate below zero</strong> = deeply accommodative; money is cheap in
-      inflation-adjusted terms. This was the story of 2020&ndash;2022.</li>
-      <li><strong>Breakeven rising faster than EFFR</strong> = the market thinks the Fed is
-      behind the curve on inflation.</li>
-      <li><strong>Implied real path below zero at future meetings</strong> = the market
-      expects the Fed to ease into negative real territory &mdash; an unusual, stimulative
-      stance often associated with recession hedging.</li>
-    </ul>
-    <p><em>Note on the forward projection:</em> The dotted lines use today&rsquo;s 5Y breakeven
-    as a flat proxy for future inflation expectations. In reality breakevens will move; treat
-    the implied real path as a &ldquo;what if inflation stays here&rdquo; scenario rather than
-    a precise forecast.</p>
-  </div>
-
-  <div class="section">
-    <h3>Meeting Path &mdash; Real Rate Overlay</h3>
-    <p>The Meeting Path tab also now shows the real rate overlay (green dotted line) alongside
-    the nominal path. This makes it easy to see, meeting by meeting, whether the implied policy
-    stance is restrictive (real rate above zero) or accommodative (below zero), and how that
-    evolves across the hiking/cutting cycle.</p>
-    <p>The <strong>0% real</strong> dashed grey line acts as the neutral boundary. Policy dots
-    sitting well above it signal the market pricing in a prolonged restrictive stance; dots
-    crossing below it signal a pivot into accommodation.</p>
-  </div>
-
-  <div class="section">
-    <h3>Data Sources &amp; Refresh</h3>
-    <table>
-      <thead><tr><th>Data</th><th>Source</th><th>Frequency</th></tr></thead>
-      <tbody>
-        <tr><td>EFFR &amp; SOFR fixings</td><td>NY Fed public CSV API</td><td>Daily (T+1 business day)</td></tr>
-        <tr><td>FOMC meeting calendar</td><td>Federal Reserve (hard-coded)</td><td>Annual refresh</td></tr>
-        <tr><td>SR3 &amp; ZQ settlements</td><td>Databento / CME Globex</td><td>Daily close</td></tr>
-        <tr><td>5Y &amp; 5Y5Y TIPS breakevens</td><td>FRED (St. Louis Fed) &mdash; T5YIE, T5YIFR</td><td>Daily</td></tr>
-        <tr><td>This page</td><td>Netlify build trigger</td><td>Hourly on weekdays</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-"""
-
+    # 11. [placeholder to preserve numbering]
     # 11. Save combined single-file dashboard with tabs → public/index.html
     #     Netlify serves the public/ directory as the site root.
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -965,8 +1078,8 @@ if __name__ == "__main__":
         for i, (_, fig) in enumerate(chart_tabs)
     ]
 
-    all_tab_labels  = [label for label, _ in chart_tabs] + ["How to Read This"]
-    all_tab_content = chart_divs + [LEARN_HTML]
+    all_tab_labels  = [label for label, _ in chart_tabs]
+    all_tab_content = [div + expl for div, expl in zip(chart_divs, EXPLAINERS)]
 
     tab_buttons = "\n".join(
         f'    <button class="tab-btn{" active" if i == 0 else ""}" '
@@ -1041,84 +1154,74 @@ if __name__ == "__main__":
   .tab-pane        {{ display: none; padding: 20px 24px; }}
   .tab-pane.active {{ display: block; }}
 
-  /* ── Learning guide ── */
-  .learn {{ max-width: 860px; }}
-  .learn h2 {{
-    font-family: Bahnschrift, "Segoe UI", sans-serif;
+  /* ── Per-chart inline explainers ── */
+  .explainer {{
+    max-width: 900px;
+    margin: 36px 0 0;
+    padding: 24px 28px;
+    border-top: 1px solid {CFR["rule"]};
+    background: #040404;
+  }}
+  .explainer > h4 {{
     color: {CFR["orange"]};
-    font-size: 20px;
-    margin: 0 0 4px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin: 0 0 22px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid {CFR["rule"]};
+  }}
+  .expl-section {{ margin-bottom: 26px; }}
+  .expl-section h5 {{
+    color: {CFR["orangeHot"]};
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: .06em;
-  }}
-  .learn .subtitle {{
-    color: #666;
-    font-size: 12px;
-    font-family: "IBM Plex Mono", monospace;
-    margin: 0 0 28px;
-  }}
-  .learn .section {{
     border-left: 2px solid {CFR["rule"]};
-    padding-left: 18px;
-    margin-bottom: 30px;
-  }}
-  .learn h3 {{
-    color: {CFR["orangeHot"]};
-    font-size: 13px;
-    font-family: "IBM Plex Mono", monospace;
-    letter-spacing: .05em;
-    text-transform: uppercase;
+    padding-left: 10px;
     margin: 0 0 10px;
   }}
-  .learn p, .learn li {{
+  .explainer p, .explainer li {{
     font-size: 13.5px;
-    line-height: 1.7;
+    line-height: 1.75;
     color: {CFR["text"]};
     margin: 0 0 10px;
   }}
-  .learn ul {{ padding-left: 20px; margin: 0 0 10px; }}
-  .learn pre {{
-    background: #0d0d0d;
-    border: 1px solid {CFR["rule"]};
-    border-radius: 4px;
-    padding: 12px 16px;
-    font-family: "IBM Plex Mono", monospace;
-    font-size: 12px;
-    color: {CFR["orangeDim"]};
-    white-space: pre-wrap;
-    margin: 0 0 10px;
-  }}
-  .learn code {{
+  .explainer ul {{ padding-left: 20px; margin: 0 0 10px; }}
+  .explainer code {{
     font-family: "IBM Plex Mono", monospace;
     font-size: 12px;
     background: #0d0d0d;
     color: {CFR["orangeHot"]};
-    padding: 1px 5px;
+    padding: 2px 6px;
     border-radius: 3px;
   }}
-  .learn table {{
+  .explainer table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 12.5px;
-    margin-bottom: 10px;
+    font-size: 13px;
+    margin: 8px 0 14px;
   }}
-  .learn th {{
+  .explainer th {{
     text-align: left;
     color: {CFR["orange"]};
     font-family: "IBM Plex Mono", monospace;
-    font-size: 11px;
-    letter-spacing: .05em;
+    font-size: 10px;
     text-transform: uppercase;
-    border-bottom: 1px solid {CFR["rule"]};
+    letter-spacing: .06em;
     padding: 6px 10px;
+    border-bottom: 1px solid {CFR["rule"]};
   }}
-  .learn td {{
+  .explainer td {{
     padding: 7px 10px;
     border-bottom: 1px solid #111;
     color: {CFR["text"]};
     vertical-align: top;
+    font-size: 13px;
   }}
-  .learn tr:hover td {{ background: #0a0a0a; }}
+  .explainer tr:hover td {{ background: #090909; }}
 </style>
 </head>
 <body>
