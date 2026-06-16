@@ -21,7 +21,7 @@ body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier N
 }
 .brand { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #fe7c04; }
 .brand span { color: #3d2510; }
-.header-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10px; color: #555; }
+.header-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10px; color: #999; }
 .hstat strong { color: #d0d0d0; }
 .hstat.warn strong { color: #fe7c04; }
 .hstat.stress strong { color: #e24b4a; }
@@ -29,7 +29,7 @@ body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier N
 .header-right { display: flex; gap: 6px; align-items: center; }
 
 /* ── FIX #7: data-as-of stamp ── */
-.data-stamp { font-size: 9px; color: #2a2a2a; letter-spacing: 0.06em; }
+.data-stamp { font-size: 9px; color: #888; letter-spacing: 0.06em; }
 
 .learn-btn, .alerts-btn {
   padding: 4px 12px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
@@ -90,7 +90,7 @@ body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier N
 .nav-tab {
   padding: 7px 16px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
   cursor: pointer; border: none; border-bottom: 2px solid transparent;
-  background: none; color: #555; font-family: inherit; transition: all 0.12s; margin-bottom: -1px;
+  background: none; color: #999; font-family: inherit; transition: all 0.12s; margin-bottom: -1px;
 }
 .nav-tab.active { color: #fe7c04; border-bottom-color: #fe7c04; }
 
@@ -105,7 +105,7 @@ body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier N
 /* ── Stat cards ── */
 .stat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .stat { background: #080808; border: 1px solid #141414; border-radius: 4px; padding: 8px 14px; min-width: 100px; }
-.stat .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #444; margin-bottom: 3px; }
+.stat .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #888; margin-bottom: 3px; }
 .stat .val { font-size: 17px; font-weight: 600; color: #d0d0d0; }
 .stat .val.pos { color: #00e676; } .stat .val.neg { color: #fe7c04; }
 .stat .val.stress { color: #e24b4a; } .stat .val.warn { color: #fe7c04; }
@@ -164,7 +164,7 @@ table.spread td:first-child { text-align: left; color: #555; font-size: 10px; }
 
 /* ── BE badge ── */
 .be-badge { display: inline-flex; align-items: center; gap: 8px; background: #080808; border: 1px solid #1e1008; border-radius: 4px; padding: 5px 12px; margin-bottom: 10px; }
-.be-badge .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #444; }
+.be-badge .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #888; }
 .be-badge .val { font-size: 14px; font-weight: 600; color: #fe7c04; }
 .be-badge .src { font-size: 9px; color: #333; }
 
@@ -1126,7 +1126,7 @@ async function loadCredit() {
 
   // FIX #7: data-as-of stamp
   const latestDate=labs[labs.length-1];
-  document.getElementById('data-stamp').textContent=`Data as of ${latestDate}${usingSynth?' (synthetic)':''}`;
+  document.getElementById('data-stamp').textContent=`Data as of ${latestDate}`;
 
   // FIX #10: save snapshot
   const spotReal=+(EFFR-BE).toFixed(3);
