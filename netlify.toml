@@ -1,4 +1,9 @@
 [build]
-  command   = "cp stir_dashboard_v2.html public/index.html"
-  publish   = "public"
+  command = ""
+  publish = "."
   functions = "netlify/functions"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
