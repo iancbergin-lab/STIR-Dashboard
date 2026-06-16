@@ -98,7 +98,7 @@ exports.handler = async (event) => {
   // Look back up to 7 calendar days to catch weekends/holidays
   const now     = new Date();
   const toDate  = now.toISOString().slice(0, 10);
-  const fromObj = new Date(now); fromObj.setDate(fromObj.getDate() - 7);
+  const fromObj = new Date(now); fromObj.setDate(fromObj.getDate() - 14);
   const fromDate = fromObj.toISOString().slice(0, 10);
 
   // Fetch all tickers in parallel
