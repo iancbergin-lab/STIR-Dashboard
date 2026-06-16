@@ -1,7 +1,7 @@
-// Polygon.io futures proxy — server-side to keep API key out of the browser.
+// Massive.com futures proxy — server-side to keep API key out of the browser.
 // POST { product: 'ZQ' | 'SR3' }  →  [{ symbol, settle, implied_rate, expiry }]
 
-const POLYGON_BASE = 'https://api.polygon.io';
+const MASSIVE_BASE = 'https://api.massive.com';
 
 // CME month codes
 const MC = { 1:'F',2:'G',3:'H',4:'J',5:'K',6:'M',7:'N',8:'Q',9:'U',10:'V',11:'X',12:'Z' };
@@ -63,9 +63,9 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method not allowed' };
   }
 
-  const apiKey = process.env.POLYGON_API_KEY;
+  const apiKey = process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY;
   if (!apiKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'POLYGON_API_KEY not configured' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: 'MASSIVE_API_KEY not configured' }) };
   }
 
   let product;
@@ -81,14 +81,14 @@ exports.handler = async (event) => {
 
   const tickers = product === 'ZQ' ? zqTickers() : sr3Tickers();
   const tickerParam = tickers.join(',');
-  const url = `${POLYGON_BASE}/v3/snapshot?ticker.any_of=${encodeURIComponent(tickerParam)}&apiKey=${apiKey}`;
+  const url = `${MASSIVE_BASE}/v3/snapshot?ticker.any_of=${encodeURIComponent(tickerParam)}&apiKey=${apiKey}`;
 
   let polygonData;
   try {
     const res = await fetch(url);
     if (!res.ok) {
       const text = await res.text();
-      return { statusCode: 502, body: JSON.stringify({ error: `Polygon ${res.status}`, detail: text }) };
+      return { statusCode: 502, body: JSON.stringify({ error: `Massive ${res.status}`, detail: text }) };
     }
     polygonData = await res.json();
   } catch (e) {
