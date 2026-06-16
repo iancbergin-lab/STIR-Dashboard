@@ -1,6 +1,3 @@
 [build]
-  command   = "pip install -r requirements.txt && python stir_dashboard.py"
-  publish   = "public"
-
-[build.environment]
-  PYTHON_VERSION = "3.11"
+  publish = "."
+  functions = "netlify/functions"
