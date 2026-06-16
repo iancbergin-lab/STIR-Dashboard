@@ -1,89 +1,1289 @@
-// netlify/functions/claude.js
-// ─────────────────────────────────────────────────────────────────────────────
-// Serverless proxy for the Anthropic API.
-// The ANTHROPIC_API_KEY environment variable is set in Netlify's dashboard
-// and never exposed to the browser — this function is the only code that
-// touches it. The browser calls /.netlify/functions/claude instead of
-// api.anthropic.com directly.
-// ─────────────────────────────────────────────────────────────────────────────
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STIR Dashboard — Capital Flows Research</title>
+<!-- FIX #1/#2: annotation plugin loaded alongside Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; }
+body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier New',monospace; min-height: 100vh; }
 
-exports.handler = async function (event) {
+/* ── Layout ── */
+.app-header {
+  background: #060606; border-bottom: 1px solid #1a1a1a;
+  padding: 10px 16px; display: flex; align-items: center;
+  justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  position: sticky; top: 0; z-index: 100;
+}
+.brand { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #fe7c04; }
+.brand span { color: #3d2510; }
+.header-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10px; color: #555; }
+.hstat strong { color: #d0d0d0; }
+.hstat.warn strong { color: #fe7c04; }
+.hstat.stress strong { color: #e24b4a; }
+.hstat.ok strong { color: #00e676; }
+.header-right { display: flex; gap: 6px; align-items: center; }
 
-  // Only accept POST requests
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      body: JSON.stringify({ error: 'Method not allowed' }),
-    };
-  }
+/* ── FIX #7: data-as-of stamp ── */
+.data-stamp { font-size: 9px; color: #2a2a2a; letter-spacing: 0.06em; }
 
-  // API key lives in Netlify environment variables — never in client code
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'API key not configured on server' }),
-    };
-  }
+.learn-btn, .alerts-btn {
+  padding: 4px 12px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  cursor: pointer; border: 1px solid #3d2510; border-radius: 3px;
+  background: #0a0400; color: #fe7c04; font-family: inherit; transition: all 0.12s;
+  white-space: nowrap; position: relative;
+}
+.learn-btn:hover, .alerts-btn:hover { background: #140800; }
+.learn-btn.active, .alerts-btn.active { background: #140800; border-color: #5a2c00; }
+.alert-pip {
+  position: absolute; top: -3px; right: -3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #e24b4a; border: 1px solid #000;
+  display: none;
+}
+.alert-pip.visible { display: block; }
 
-  // Parse the request body sent from the dashboard
-  let payload;
+.main-layout { display: flex; min-height: calc(100vh - 44px); }
+.content { flex: 1; padding: 14px 16px; min-width: 0; }
+
+/* ── Drawers (learn + alerts) ── */
+.side-drawer {
+  width: 0; overflow: hidden; transition: width 0.25s ease;
+  border-left: 1px solid #111; background: #040404; flex-shrink: 0;
+}
+.side-drawer.open { width: 360px; }
+.drawer-inner { width: 360px; padding: 14px; height: 100%; overflow-y: auto; }
+
+/* ── FIX #11: alerts panel styles ── */
+.alerts-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #1a1a1a; }
+.alerts-title { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: #fe7c04; }
+.alerts-clear { font-size: 9px; color: #333; cursor: pointer; background: none; border: none; font-family: inherit; }
+.alerts-clear:hover { color: #555; }
+.alert-item {
+  border-radius: 3px; padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid; font-size: 10px; line-height: 1.6;
+}
+.alert-item.stress { background: #100000; border-color: #3a0000; color: #e24b4a; }
+.alert-item.watch  { background: #0a0500; border-color: #3d2510; color: #fe7c04; }
+.alert-item.info   { background: #000a08; border-color: #003020; color: #00e676; }
+.alert-time { font-size: 8px; opacity: 0.6; margin-top: 3px; }
+.alert-empty { font-size: 10px; color: #333; text-align: center; padding: 24px 0; }
+
+/* ── Notify toast ── */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 999;
+  background: #0a0400; border: 1px solid #5a2c00; border-radius: 4px;
+  padding: 10px 14px; font-size: 11px; color: #fe7c04;
+  max-width: 300px; line-height: 1.6;
+  transform: translateY(60px); opacity: 0;
+  transition: all 0.3s ease; pointer-events: none;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.toast-stress { border-color: #5a0000; color: #e24b4a; background: #0a0000; }
+
+/* ── Nav ── */
+.nav-tabs { display: flex; gap: 0; border-bottom: 1px solid #1a1a1a; margin-bottom: 14px; }
+.nav-tab {
+  padding: 7px 16px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  cursor: pointer; border: none; border-bottom: 2px solid transparent;
+  background: none; color: #555; font-family: inherit; transition: all 0.12s; margin-bottom: -1px;
+}
+.nav-tab.active { color: #fe7c04; border-bottom-color: #fe7c04; }
+
+.subtabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.subtab {
+  padding: 4px 12px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  cursor: pointer; border: 1px solid #1a1a1a; border-radius: 3px;
+  background: none; color: #555; font-family: inherit; transition: all 0.12s;
+}
+.subtab.active { background: #0a0400; color: #fe7c04; border-color: #3d2510; }
+
+/* ── Stat cards ── */
+.stat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.stat { background: #080808; border: 1px solid #141414; border-radius: 4px; padding: 8px 14px; min-width: 100px; }
+.stat .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #444; margin-bottom: 3px; }
+.stat .val { font-size: 17px; font-weight: 600; color: #d0d0d0; }
+.stat .val.pos { color: #00e676; } .stat .val.neg { color: #fe7c04; }
+.stat .val.stress { color: #e24b4a; } .stat .val.warn { color: #fe7c04; }
+.stat .val.calm { color: #00e676; } .stat .val.neu { color: #d0d0d0; }
+.stat .sub { font-size: 9px; color: #444; margin-top: 2px; }
+
+/* ── Regime badge ── */
+.regime-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  border-radius: 4px; padding: 5px 12px; margin-bottom: 12px;
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid;
+}
+.regime-badge.calm  { background: #001a0a; border-color: #00401a; color: #00e676; }
+.regime-badge.watch { background: #1a0d00; border-color: #5a2c00; color: #fe7c04; }
+.regime-badge.stress{ background: #1a0000; border-color: #5a0000; color: #e24b4a; }
+
+/* ── Charts ── */
+.chart-label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #444; margin-bottom: 6px; }
+.chart-wrap { position: relative; width: 100%; margin-bottom: 14px; }
+canvas { display: block; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; font-size: 10px; color: #555; }
+.leg { display: flex; align-items: center; gap: 5px; }
+.swatch { width: 18px; height: 2px; }
+
+/* ── Status ── */
+.status-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 10px; color: #444; flex-wrap: wrap; }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot.loading { background: #333; animation: blink 1s ease-in-out infinite; }
+.dot.ok { background: #fe7c04; }
+.dot.error { background: #e24b4a; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+/* ── Panels ── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.sub-panel { display: none; }
+.sub-panel.active { display: block; }
+
+/* ── Products toggle ── */
+.toggle-row { display: flex; gap: 6px; margin-bottom: 10px; }
+.tgl {
+  padding: 4px 12px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  cursor: pointer; border: 1px solid #1a1a1a; border-radius: 3px;
+  background: none; color: #555; font-family: inherit; transition: all 0.12s;
+}
+.tgl.active { background: #0a0400; color: #c05a02; border-color: #3d2510; }
+
+/* ── Spread table ── */
+.mtx-wrap { overflow-x: auto; margin-bottom: 14px; }
+table.spread { width: 100%; border-collapse: collapse; font-size: 11px; }
+table.spread th { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #444; text-align: right; padding: 4px 8px; border-bottom: 1px solid #1a1a1a; }
+table.spread th:first-child { text-align: left; }
+table.spread td { padding: 5px 8px; text-align: right; border-bottom: 0.5px solid #111; font-size: 11px; }
+table.spread td:first-child { text-align: left; color: #555; font-size: 10px; }
+.pos { color: #00e676; } .neg { color: #fe7c04; } .neu { color: #d0d0d0; }
+
+/* ── BE badge ── */
+.be-badge { display: inline-flex; align-items: center; gap: 8px; background: #080808; border: 1px solid #1e1008; border-radius: 4px; padding: 5px 12px; margin-bottom: 10px; }
+.be-badge .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #444; }
+.be-badge .val { font-size: 14px; font-weight: 600; color: #fe7c04; }
+.be-badge .src { font-size: 9px; color: #333; }
+
+/* ── Pct bar ── */
+.pct-label { font-size: 9px; color: #444; margin-bottom: 3px; }
+.pct-bar-bg { background: #111; border-radius: 2px; height: 5px; width: 100%; overflow: hidden; margin-bottom: 3px; }
+.pct-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.pct-val { font-size: 9px; color: #444; }
+
+/* ── Footnote ── */
+.footnote { font-size: 9px; color: #333; line-height: 1.6; border-top: 1px solid #0d0d0d; padding-top: 8px; margin-top: 4px; }
+
+/* ── Prob cards ── */
+.prob-wrap { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.prob-card { background: #080808; border: 1px solid #111; border-radius: 4px; padding: 6px 10px; min-width: 78px; }
+.prob-mtg { font-size: 9px; color: #444; margin-bottom: 3px; }
+.prob-row { display: flex; justify-content: space-between; font-size: 10px; gap: 8px; }
+.prob-name { color: #555; }
+.prob-pct { font-weight: 500; }
+
+/* ── Learning drawer ── */
+.learn-section-title { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: #fe7c04; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #1a1a1a; }
+.mode-tabs { display: flex; gap: 5px; margin-bottom: 12px; }
+.mtab { padding: 4px 10px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border: 1px solid #1a1a1a; border-radius: 3px; background: none; color: #444; font-family: inherit; transition: all 0.12s; }
+.mtab.active { background: #0a0400; color: #fe7c04; border-color: #3d2510; }
+.lp { display: none; }
+.lp.active { display: block; }
+.etabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.etab { padding: 3px 8px; font-size: 9px; cursor: pointer; border: 1px solid #111; border-radius: 3px; background: none; color: #444; font-family: inherit; transition: all 0.12s; }
+.etab.active { color: #c0c0c0; border-color: #333; }
+.exp { display: none; } .exp.active { display: block; }
+.exp h3 { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: #fe7c04; margin-bottom: 8px; }
+.exp p { font-size: 10px; color: #777; line-height: 1.8; margin-bottom: 6px; }
+.exp .key { background: #080808; border-left: 2px solid #3d2510; padding: 7px 10px; margin: 8px 0; font-size: 10px; color: #999; line-height: 1.7; }
+.exp .key strong { color: #fe7c04; }
+.exp .rule { font-size: 9px; color: #444; border-top: 1px solid #0d0d0d; padding-top: 6px; margin-top: 6px; line-height: 1.6; }
+.chat-win { background: #030303; border: 1px solid #141414; border-radius: 4px; height: 280px; overflow-y: auto; padding: 10px; margin-bottom: 8px; scroll-behavior: smooth; }
+.msg { margin-bottom: 10px; }
+.msg-role { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; }
+.msg-role.user { color: #444; } .msg-role.asst { color: #fe7c04; }
+.msg-body { font-size: 10px; line-height: 1.8; color: #aaa; white-space: pre-wrap; }
+.msg-body.user { color: #666; }
+.typing-ind { color: #333; font-size: 10px; }
+.blink { animation: blink 0.8s infinite; }
+.input-row { display: flex; gap: 6px; }
+.chat-input { flex: 1; background: #080808; border: 1px solid #141414; border-radius: 3px; color: #c0c0c0; font-family: inherit; font-size: 10px; padding: 7px 10px; outline: none; resize: none; transition: border-color 0.15s; }
+.chat-input:focus { border-color: #3d2510; }
+.send-btn { padding: 7px 12px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border: 1px solid #3d2510; border-radius: 3px; background: #0a0400; color: #fe7c04; font-family: inherit; white-space: nowrap; }
+.send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.ctx-toggle { font-size: 9px; color: #2a2a2a; margin-bottom: 6px; cursor: pointer; }
+.ctx-toggle:hover { color: #444; }
+.ctx-pre { background: #060606; border: 1px solid #0d0d0d; border-radius: 3px; padding: 7px 9px; margin-bottom: 7px; font-size: 8px; color: #333; line-height: 1.6; display: none; }
+.quiz-card { background: #060606; border: 1px solid #141414; border-radius: 4px; padding: 12px 14px; }
+.quiz-lbl { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: #444; margin-bottom: 6px; }
+.quiz-q { font-size: 11px; color: #c0c0c0; line-height: 1.8; margin-bottom: 10px; }
+.quiz-data { background: #080808; border-left: 2px solid #2a1a08; padding: 5px 9px; font-size: 9px; color: #555; margin-bottom: 10px; line-height: 1.7; }
+.quiz-input { width: 100%; background: #040404; border: 1px solid #141414; border-radius: 3px; color: #c0c0c0; font-family: inherit; font-size: 10px; padding: 7px 10px; outline: none; resize: vertical; min-height: 55px; transition: border-color 0.15s; margin-bottom: 7px; }
+.quiz-input:focus { border-color: #3d2510; }
+.quiz-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.qbtn { padding: 5px 12px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border: 1px solid #3d2510; border-radius: 3px; background: #0a0400; color: #fe7c04; font-family: inherit; }
+.qbtn.sec { background: none; border-color: #1a1a1a; color: #444; }
+.qbtn:disabled { opacity: 0.35; cursor: not-allowed; }
+.feedback { background: #060606; border: 1px solid #141414; border-radius: 4px; padding: 10px 12px; margin-top: 8px; font-size: 10px; color: #999; line-height: 1.8; display: none; white-space: pre-wrap; }
+.fb-lbl { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: #fe7c04; margin-bottom: 5px; }
+.next-row { margin-top: 8px; display: none; }
+.score-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 9px; color: #444; }
+.score-dots { display: flex; gap: 4px; }
+.sdot { width: 7px; height: 7px; border-radius: 50%; background: #141414; }
+.sdot.correct { background: #006030; } .sdot.wrong { background: #5a0000; } .sdot.active { background: #fe7c04; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="brand">STIR <span>·</span> Capital Flows Research</div>
+  <div class="header-stats" id="header-stats"><span class="hstat">Loading…</span></div>
+  <div class="header-right">
+    <!-- FIX #7: data stamp injected by JS -->
+    <span class="data-stamp" id="data-stamp"></span>
+    <button class="alerts-btn" id="alerts-btn" onclick="toggleAlerts()">
+      Alerts ▸<span class="alert-pip" id="alert-pip"></span>
+    </button>
+    <button class="learn-btn" id="learn-btn" onclick="toggleLearn()">Learn ▸</button>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<div class="main-layout">
+  <div class="content">
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchTab('products')">Products</button>
+      <button class="nav-tab" onclick="switchTab('meetings')">Meetings</button>
+      <button class="nav-tab" onclick="switchTab('realrates')">Real Rates</button>
+      <button class="nav-tab" onclick="switchTab('credit')">Credit</button>
+    </div>
+
+    <!-- PRODUCTS -->
+    <div id="tab-products" class="tab-panel active">
+      <div class="toggle-row">
+        <button class="tgl active" id="tgl-sofr" onclick="switchProduct('sofr')">SOFR (SR3)</button>
+        <button class="tgl" id="tgl-ff" onclick="switchProduct('ff')">Fed Funds (ZQ)</button>
+      </div>
+      <!-- FIX #2: EFFR drawn as a proper dataset, no monkey-patch -->
+      <div class="chart-wrap" style="height:260px"><canvas id="c-strip"></canvas></div>
+    </div>
+
+    <!-- MEETINGS -->
+    <div id="tab-meetings" class="tab-panel">
+      <div class="subtabs">
+        <button class="subtab active" onclick="switchMtg('path')">Strip</button>
+        <button class="subtab" onclick="switchMtg('spreads')">Spreads</button>
+        <button class="subtab" onclick="switchMtg('cblvl')">CB LVL</button>
+      </div>
+      <div id="mtg-path" class="sub-panel active">
+        <div class="chart-wrap" style="height:240px"><canvas id="c-path"></canvas></div>
+        <div class="prob-wrap" id="prob-wrap"></div>
+      </div>
+      <div id="mtg-spreads" class="sub-panel">
+        <div class="mtx-wrap"><table class="spread" id="spread-table"></table></div>
+      </div>
+      <div id="mtg-cblvl" class="sub-panel">
+        <!-- FIX #1: CB LVL canvas — rails now actually render via annotation plugin -->
+        <div class="chart-wrap" style="height:280px"><canvas id="c-cblvl"></canvas></div>
+        <div class="footnote">Dashed rails at every 25bp policy increment. Bright solid rail = current settle level (EFFR rounded to nearest 25bp). Meeting path plotted as step chart.</div>
+      </div>
+    </div>
+
+    <!-- REAL RATES -->
+    <div id="tab-realrates" class="tab-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+        <div>
+          <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#fe7c04;margin-bottom:2px">Real Rates · Implied Path</div>
+          <div style="font-size:9px;color:#444">ZQ post-meeting nominal path minus 5Y TIPS breakeven</div>
+        </div>
+        <div class="be-badge"><span class="lbl">5Y BE</span><span class="val" id="be-val">—</span><span class="src">FRED · DFII5</span></div>
+      </div>
+      <div class="status-bar"><span class="dot loading" id="dot-be"></span><span id="txt-be">Fetching DFII5…</span></div>
+      <div class="stat-row" id="rr-stats" style="display:none"></div>
+      <div class="legend">
+        <span class="leg"><span class="swatch" style="background:#fe7c04"></span>Implied real path</span>
+        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#666 0,#666 4px,transparent 4px,transparent 8px)"></span>Spot real</span>
+        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#2a2a2a 0,#2a2a2a 3px,transparent 3px,transparent 6px)"></span>0% real</span>
+      </div>
+      <div class="chart-wrap" style="height:260px"><canvas id="c-rr"></canvas></div>
+      <div class="footnote" id="rr-footnote"></div>
+    </div>
+
+    <!-- CREDIT -->
+    <div id="tab-credit" class="tab-panel">
+      <div class="status-bar">
+        <span class="dot loading" id="dot-hy"></span><span id="txt-hy">HY OAS…</span>
+        <span style="color:#1a1a1a">|</span>
+        <span class="dot loading" id="dot-ccc"></span><span id="txt-ccc">CCC…</span>
+        <span style="color:#1a1a1a">|</span>
+        <span class="dot loading" id="dot-bb"></span><span id="txt-bb">BB…</span>
+        <span style="color:#1a1a1a">|</span>
+        <span class="dot loading" id="dot-ig"></span><span id="txt-ig">IG…</span>
+      </div>
+      <div id="cr-regime-badge" class="regime-badge watch" style="display:none"></div>
+      <div class="stat-row" id="cr-stats" style="display:none"></div>
+      <div class="subtabs">
+        <button class="subtab active" onclick="switchCredit('oas')">HY OAS Level</button>
+        <button class="subtab" onclick="switchCredit('roc')">Rate of Change</button>
+        <button class="subtab" onclick="switchCredit('quality')">Quality Spread</button>
+        <button class="subtab" onclick="switchCredit('regime')">OAS vs Cuts</button>
+      </div>
+      <div id="cr-oas" class="sub-panel active">
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>HY OAS</span><span class="leg"><span class="swatch" style="background:#3d2510"></span>IG OAS</span></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-oas"></canvas></div>
+        <div id="pct-wrap"></div>
+        <div class="footnote">Level alone is slow. Watch rate-of-change for regime shifts. IG overlay distinguishes isolated HY stress from broad market stress.</div>
+      </div>
+      <div id="cr-roc" class="sub-panel">
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>5-day Δ (orange=widening)</span><span class="leg"><span class="swatch" style="background:#3d2510"></span>20-day Δ</span></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-roc"></canvas></div>
+        <div class="footnote">5d move ≥+30bp warrants attention. 20d turning positive and accelerating = regime shift not a wobble.</div>
+      </div>
+      <div id="cr-quality" class="sub-panel">
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#e24b4a"></span>CCC OAS</span><span class="leg"><span class="swatch" style="background:#fe7c04"></span>BB OAS</span><span class="leg"><span class="swatch" style="background:#555;border-top:1px dashed #555"></span>CCC−BB gap</span></div>
+        <div class="chart-wrap" style="height:240px"><canvas id="c-quality"></canvas></div>
+        <div class="footnote">CCC−BB widening = capital discriminating, exiting weakest credits first. Earliest available credit stress signal.</div>
+      </div>
+      <div id="cr-regime" class="sub-panel">
+        <!-- FIX #4: regime overlay redesigned — historical OAS vs historical cuts-priced -->
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#e24b4a"></span>HY OAS (bp, L)</span><span class="leg"><span class="swatch" style="background:#fe7c04;border-top:1px dashed #fe7c04"></span>Cuts priced ×25bp (R, inv.)</span></div>
+        <div style="font-size:9px;color:#444;margin-bottom:8px">Both series on same trailing window. OAS rising while cuts flat = credit leading rates — the key divergence to watch.</div>
+        <div class="chart-wrap" style="height:220px"><canvas id="c-cr-regime"></canvas></div>
+        <div class="footnote" id="cr-regime-read"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERTS DRAWER -->
+  <div class="side-drawer" id="alerts-drawer">
+    <div class="drawer-inner">
+      <div class="alerts-header">
+        <span class="alerts-title">Alert Log</span>
+        <button class="alerts-clear" onclick="clearAlerts()">Clear all</button>
+      </div>
+      <div id="alert-list"><div class="alert-empty">No alerts yet. Data checks run on load.</div></div>
+    </div>
+  </div>
+
+  <!-- LEARN DRAWER -->
+  <div class="side-drawer" id="learn-drawer">
+    <div class="drawer-inner">
+      <div class="learn-section-title">Learning Panel</div>
+      <div class="mode-tabs">
+        <button class="mtab active" onclick="switchLearnMode('explain')">Explainer</button>
+        <button class="mtab" onclick="switchLearnMode('qa')">Ask</button>
+        <button class="mtab" onclick="switchLearnMode('quiz')">Quiz</button>
+      </div>
+      <div id="lp-explain" class="lp active">
+        <div class="etabs">
+          <button class="etab active" onclick="switchExp('oas',this)">HY OAS</button>
+          <button class="etab" onclick="switchExp('roc',this)">ROC</button>
+          <button class="etab" onclick="switchExp('quality',this)">Quality</button>
+          <button class="etab" onclick="switchExp('oasvcuts',this)">OAS/Cuts</button>
+          <button class="etab" onclick="switchExp('real',this)">Real rates</button>
+          <button class="etab" onclick="switchExp('stir',this)">STIR</button>
+        </div>
+        <div id="exp-oas" class="exp active">
+          <h3>What is HY OAS?</h3>
+          <p>OAS = option-adjusted spread. The yield premium investors demand to hold a junk bond instead of a risk-free Treasury of the same duration, after removing embedded call option value.</p>
+          <div class="key"><strong>Higher OAS</strong> = more compensation demanded = less risk appetite.<br><strong>Lower OAS</strong> = tighter conditions = more confidence in corporate health.</div>
+          <div class="rule">Below 300bp = late-cycle complacency historically. Above 600bp = recessionary stress. Direction and rate-of-change matter more than the level.</div>
+        </div>
+        <div id="exp-roc" class="exp">
+          <h3>Why rate of change, not level?</h3>
+          <p>The level tells you where credit is. The rate of change tells you where it is going and how fast.</p>
+          <div class="key"><strong>5-day Δ ≥+30bp:</strong> primary alert trigger — investigate.<br><strong>20-day Δ turning positive and accelerating:</strong> regime change, not a wobble.</div>
+          <div class="rule">380bp falling and 380bp rising are opposite regimes. Two identical levels can sit at opposite ends of the credit cycle.</div>
+        </div>
+        <div id="exp-quality" class="exp">
+          <h3>Quality spread — CCC minus BB</h3>
+          <p>The HY index blends BB (near-investment-grade) and CCC (near-default). When the gap widens, capital is discriminating — exiting the weakest names first.</p>
+          <div class="key">A widening CCC−BB gap <strong>before</strong> the headline index moves is your earliest credit stress signal. Leads broad HY widening by days to weeks at cycle turns.</div>
+          <div class="rule">Gap widening while headline flat = early stress. Both legs falling, gap compressing = recovery phase.</div>
+        </div>
+        <div id="exp-oasvcuts" class="exp">
+          <h3>OAS vs cuts — the regime diagnostic</h3>
+          <p>The same number of priced cuts means opposite things depending on what credit is doing simultaneously.</p>
+          <div class="key"><strong>Wide OAS + many cuts:</strong> forced/defensive easing. Something breaking.<br><br><strong>Calm OAS + cuts:</strong> benign easing. Inflation normalising, no stress.<br><br><strong>OAS rising + few cuts yet:</strong> credit leading rates — most actionable divergence.</div>
+          <div class="rule">This overlay answers: why is the market pricing cuts?</div>
+        </div>
+        <div id="exp-real" class="exp">
+          <h3>Real rates — why subtract the breakeven?</h3>
+          <p>Nominal rates include a real return plus expected inflation. Real rates determine the actual inflation-adjusted cost of borrowing.</p>
+          <div class="key"><strong>Real = nominal − 5Y TIPS breakeven.</strong> 4% nominal with 3.5% inflation expectations = 0.5% real — far looser than 4% nominal with 2% expectations (2% real).</div>
+          <div class="rule">Positive real = restrictive. Negative real = accommodative even if nominal looks high. The zero line on the chart is the policy boundary.</div>
+        </div>
+        <div id="exp-stir" class="exp">
+          <h3>STIR — short-term interest rate futures</h3>
+          <p>STIR futures price the market's implied path for overnight rates at each future date.</p>
+          <div class="key"><strong>SR3:</strong> 3-month compounded SOFR over the contract quarter.<br><br><strong>ZQ:</strong> arithmetic average of daily EFFR over the contract month. Used for FOMC meeting-path math.<br><br><strong>Convention:</strong> both quoted as 100 minus rate. Price 95.42 = 4.58% implied.</div>
+          <div class="rule">The day-weighting algorithm decomposes ZQ into pre- and post-meeting regimes to extract the market's FOMC expectation at each meeting.</div>
+        </div>
+      </div>
+      <div id="lp-qa" class="lp">
+        <div class="ctx-toggle" onclick="toggleCtxPre()">▸ Show context sent to AI</div>
+        <div class="ctx-pre" id="ctx-pre"></div>
+        <div class="chat-win" id="chat-win">
+          <div class="msg">
+            <div class="msg-role asst">Dashboard</div>
+            <div class="msg-body">Ask anything about what you are seeing on the current tab. Live data is included automatically.</div>
+          </div>
+        </div>
+        <div class="input-row">
+          <textarea class="chat-input" id="chat-input" rows="2" placeholder="Ask about any data point or concept…"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendQ()">Send</button>
+        </div>
+      </div>
+      <div id="lp-quiz" class="lp">
+        <div class="score-bar">
+          <span>Session</span>
+          <div class="score-dots" id="score-dots"></div>
+          <span id="score-txt">0 / 0</span>
+          <button class="qbtn sec" style="margin-left:auto;padding:3px 8px;font-size:8px" onclick="initQuiz()">Reset</button>
+        </div>
+        <div class="quiz-card" id="quiz-card">
+          <div class="quiz-lbl" id="quiz-lbl">Loading…</div>
+          <div class="quiz-q" id="quiz-q"></div>
+          <div class="quiz-data" id="quiz-data"></div>
+          <textarea class="quiz-input" id="quiz-ans" placeholder="Type your reasoning here…"></textarea>
+          <div class="quiz-row">
+            <button class="qbtn" id="quiz-submit" onclick="submitAns()">Submit</button>
+            <button class="qbtn sec" onclick="skipQ()">Skip</button>
+          </div>
+          <div class="feedback" id="feedback"><div class="fb-lbl">Feedback</div><div id="fb-body"></div></div>
+          <div class="next-row" id="next-row"><button class="qbtn" onclick="nextQ()">Next →</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ══════════════════════════════════════════════════════════════════════════════
+// SHARED STATE
+// ══════════════════════════════════════════════════════════════════════════════
+const TODAY = new Date();
+const ty = TODAY.getFullYear(), tm = TODAY.getMonth() + 1;
+const CME_MC = {1:'F',2:'G',3:'H',4:'J',5:'K',6:'M',7:'N',8:'Q',9:'U',10:'V',11:'X',12:'Z'};
+
+let EFFR = 3.62, SOFR = 3.63, BE = 2.30;
+let hyNow = 0, d5Now = 0, d20Now = 0, pctNow = 0, gapNow = 0, impliedCutsNow = 0;
+// FIX #8: regime hysteresis state
+let currentRegimeClass = null;
+const REGIME_BUFFER = 5; // bp buffer before flipping
+
+let currentTab = 'products', currentProduct = 'sofr', currentMtg = 'path', currentCredit = 'oas';
+const charts = {};
+
+// FIX #11: alert log
+const alertLog = [];
+
+// FIX #10: lightweight snapshot history in localStorage
+const SNAP_KEY = 'stir_snapshots';
+function loadSnapshots() {
+  try { return JSON.parse(localStorage.getItem(SNAP_KEY) || '[]'); } catch { return []; }
+}
+function saveSnapshot(snap) {
   try {
-    payload = JSON.parse(event.body);
-  } catch {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Invalid JSON body' }),
-    };
+    const snaps = loadSnapshots();
+    snaps.push(snap);
+    // Keep last 90 days
+    const cutoff = Date.now() - 90 * 86400000;
+    const trimmed = snaps.filter(s => s.ts > cutoff);
+    localStorage.setItem(SNAP_KEY, JSON.stringify(trimmed));
+  } catch(e) { /* localStorage unavailable */ }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+function addM(y,m,n){m+=n;while(m>12){m-=12;y++;}while(m<1){m+=12;y--;}return{y,m};}
+function dim(y,m){return new Date(y,m,0).getDate();}
+function cmeSymbol(root,y,m){return `${root}${CME_MC[m]}${y%10}`;}
+function setDot(id,txtId,state,msg){document.getElementById(id).className='dot '+state;if(txtId)document.getElementById(txtId).textContent=msg;}
+
+async function fredCSV(series, days) {
+  const r = await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}`);
+  const t = await r.text();
+  const lines = t.trim().split('\n').filter(l => !l.startsWith('DATE'));
+  const out = [];
+  for (const l of lines) {
+    const [d, v] = l.split(',');
+    const n = parseFloat(v);
+    if (!isNaN(n)) out.push({ date: d, val: n });
   }
+  return out.slice(-days);
+}
 
-  // Allowlist the fields we forward — never blindly proxy arbitrary requests
-  const { model, max_tokens, system, messages } = payload;
+function rollingDelta(arr, n) { return arr.map((v,i) => i < n ? null : +(v - arr[i-n]).toFixed(2)); }
+function percentile(arr, val) { const s = [...arr].sort((a,b)=>a-b); return Math.round(s.filter(v=>v<=val).length/s.length*100); }
 
-  if (!messages || !Array.isArray(messages)) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'messages array required' }),
-    };
+function synthSeries(base, vol, days, drift) {
+  const out = []; let v = base;
+  for (let i = 0; i < days; i++) {
+    v += drift + (Math.random()-0.5)*vol; v = Math.max(base*0.5, v);
+    const d = new Date(Date.now()-(days-i)*86400000);
+    out.push({ date: d.toISOString().slice(0,10), val: +v.toFixed(2) });
   }
+  return out;
+}
 
-  // Forward to Anthropic
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':         'application/json',
-        'x-api-key':            apiKey,
-        'anthropic-version':    '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      model      || 'claude-sonnet-4-6',
-        max_tokens: max_tokens || 1000,
-        system:     system     || '',
-        messages,
-      }),
-    });
+const gridColor = 'rgba(255,255,255,0.04)';
+const txtColor = '#555';
+const fontFam = 'IBM Plex Mono';
 
-    const data = await response.json();
-
-    // Surface Anthropic errors cleanly rather than returning garbled responses
-    if (!response.ok) {
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: data?.error?.message || 'Anthropic API error' }),
-      };
+function baseOpts(yLabel, y2Label) {
+  const o = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: { backgroundColor:'#0a0a0a', titleColor:'#c0c0c0', bodyColor:'#fe7c04', borderColor:'#2a1a08', borderWidth:1 },
+      annotation: { annotations: {} }
+    },
+    scales: {
+      x: { grid:{color:gridColor}, ticks:{color:txtColor, font:{size:9,family:fontFam}, maxTicksLimit:7} },
+      y: { grid:{color:gridColor}, ticks:{color:txtColor, font:{size:9,family:fontFam}}, title:{display:!!yLabel, text:yLabel, color:'#444', font:{size:9,family:fontFam}} }
     }
+  };
+  if (y2Label) o.scales.y2 = { position:'right', grid:{drawOnChartArea:false}, ticks:{color:'#fe7c04', font:{size:9,family:fontFam}}, title:{display:true, text:y2Label, color:'#fe7c04', font:{size:9,family:fontFam}} };
+  return o;
+}
 
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    };
-
-  } catch (err) {
-    return {
-      statusCode: 502,
-      body: JSON.stringify({ error: 'Failed to reach Anthropic API', detail: err.message }),
-    };
+// ══════════════════════════════════════════════════════════════════════════════
+// SYNTHETIC STRIPS & FOMC
+// ══════════════════════════════════════════════════════════════════════════════
+function makeSofrStrip() {
+  const rates = [4.18,4.03,3.90,3.73,3.52,3.40,3.48,3.60];
+  const cs = []; let cy=ty, cm=[3,6,9,12].find(q=>q>=tm)||3;
+  for (let i=0;i<8;i++) {
+    const exp = new Date(cy,cm-1,dim(cy,cm));
+    cs.push({symbol:cmeSymbol('SR3',cy,cm), root:'SR3', expiry:exp, settle:100-rates[i], implied_rate:rates[i]});
+    let n=addM(cy,cm,3); cy=n.y; cm=n.m;
+    while(![3,6,9,12].includes(cm)){n=addM(cy,cm,1);cy=n.y;cm=n.m;}
   }
-};
+  return cs;
+}
+
+function makeFFStrip() {
+  const rates=[3.62,3.65,3.70,3.74,3.77,3.81,3.85,3.88,3.91,3.93,3.95,3.96,3.97,3.97,3.98,3.98,3.98,3.98];
+  return rates.map((r,i)=>{
+    const nm=addM(ty,tm,i);
+    const exp=new Date(nm.y,nm.m-1,dim(nm.y,nm.m));
+    return{symbol:cmeSymbol('ZQ',nm.y,nm.m), root:'ZQ', expiry:exp, settle:100-r, implied_rate:r};
+  });
+}
+
+function makeFOMC() {
+  const out=[]; let b=new Date(TODAY); b.setDate(b.getDate()+22);
+  for(let i=0;i<7;i++){out.push(new Date(b));b.setDate(b.getDate()+44);}
+  return out;
+}
+
+const sofrStrip = makeSofrStrip();
+const ffStrip   = makeFFStrip();
+const fomcDates = makeFOMC();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CORE MATHS
+// ══════════════════════════════════════════════════════════════════════════════
+function buildPath(ff, effr, fomc) {
+  const bm={};
+  ff.forEach(c=>{const k=c.expiry.getFullYear()*100+(c.expiry.getMonth()+1); bm[k]=c.implied_rate;});
+  const fk=new Set(fomc.map(d=>d.getFullYear()*100+(d.getMonth()+1)));
+  let prev=effr, rows=[];
+  for(const d of fomc){
+    const k=d.getFullYear()*100+(d.getMonth()+1); const rate=bm[k]; if(rate===undefined)continue;
+    const N=dim(d.getFullYear(),d.getMonth()+1);
+    const nm=addM(d.getFullYear(),d.getMonth()+1,1); const nk=nm.y*100+nm.m;
+    const nRate=bm[nk], nMtg=fk.has(nk);
+    let post;
+    if(nRate!==undefined&&!nMtg){post=nRate;}
+    else{const da=N-d.getDate()+1; post=da<=0?rate:(rate*N-(d.getDate()-1)*prev)/da;}
+    rows.push({meeting:d, post_rate:post, cum_cuts:(effr-post)/0.25});
+    prev=post;
+  }
+  return rows;
+}
+
+function findTerminal(strip, ocr) {
+  const active=strip.filter(c=>c.settle>0);
+  if(!active.length)return strip[0];
+  const front=active[0]; const hiking=front.implied_rate>=ocr; let best=front;
+  for(let i=1;i<active.length;i++){
+    const row=active[i];
+    if(hiking&&row.implied_rate>=best.implied_rate)best=row;
+    else if(!hiking&&row.implied_rate<=best.implied_rate)best=row;
+    else break;
+  }
+  return best;
+}
+
+function meetingProbs(postRate, effr) {
+  const raw=(effr-postRate)/0.25; const lower=Math.floor(raw); const frac=raw-lower;
+  const mass={}; mass[lower]=1-frac; if(frac>0.001)mass[lower+1]=frac;
+  return{hold:+(100*(mass[0]||0)).toFixed(1), cut25:+(100*(mass[1]||0)).toFixed(1), cut50:+(100*(mass[2]||0)).toFixed(1), hike25:+(100*(mass[-1]||0)).toFixed(1)};
+}
+
+function spreadMatrix(ff, horizons=[3,6,9,12]) {
+  return ff.slice(0,10).map(row=>{
+    const rmo=row.expiry.getFullYear()*12+row.expiry.getMonth();
+    const s={};
+    for(const h of horizons){
+      const target=rmo+h;
+      const fwd=ff.filter(c=>c.expiry.getFullYear()*12+c.expiry.getMonth()>=target);
+      s[`+${h}M`]=fwd.length?Math.round((fwd[0].implied_rate-row.implied_rate)*100):null;
+    }
+    return{contract:row.symbol,...s};
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #11: ALERT SYSTEM
+// ══════════════════════════════════════════════════════════════════════════════
+function fireAlert(level, message) {
+  // level: 'stress' | 'watch' | 'info'
+  const ts = new Date().toLocaleTimeString('en-IE',{hour:'2-digit',minute:'2-digit'});
+  alertLog.unshift({level, message, ts});
+  renderAlertList();
+  document.getElementById('alert-pip').classList.add('visible');
+  showToast(message, level);
+}
+
+function renderAlertList() {
+  const el = document.getElementById('alert-list');
+  if (!alertLog.length) {
+    el.innerHTML = '<div class="alert-empty">No alerts yet.</div>';
+    return;
+  }
+  el.innerHTML = alertLog.map(a => `
+    <div class="alert-item ${a.level}">
+      ${a.message}
+      <div class="alert-time">${a.ts}</div>
+    </div>`).join('');
+}
+
+function clearAlerts() {
+  alertLog.length = 0;
+  renderAlertList();
+  document.getElementById('alert-pip').classList.remove('visible');
+}
+
+let toastTimer = null;
+function showToast(msg, level='watch') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast toast-${level} show`;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ el.classList.remove('show'); }, 5000);
+}
+
+// FIX #8: hysteresis-aware regime classification
+function classifyRegime(d5, d20, pct) {
+  // Determine raw signal
+  let rawClass;
+  if (d5 > 30 + REGIME_BUFFER || d20 > 60 + REGIME_BUFFER || pct > 82) rawClass = 'stress';
+  else if (d5 < 30 - REGIME_BUFFER && d20 < 60 - REGIME_BUFFER && pct < 78 &&
+           d5 < 10 - REGIME_BUFFER && d20 < 20 - REGIME_BUFFER && pct < 52) rawClass = 'calm';
+  else if (d5 > 10 || d20 > 20 || pct > 55) rawClass = 'watch';
+  else rawClass = 'calm';
+
+  // Only change regime if raw differs from current
+  const prev = currentRegimeClass;
+  if (rawClass === 'stress' || rawClass === 'calm' || prev === null) {
+    currentRegimeClass = rawClass;
+  } else if (rawClass !== prev) {
+    // watch ↔ calm transition requires clearing the buffer zone
+    const inBuffer = (d5 >= 10-REGIME_BUFFER && d5 <= 10+REGIME_BUFFER) ||
+                     (d20 >= 20-REGIME_BUFFER && d20 <= 20+REGIME_BUFFER);
+    if (!inBuffer) currentRegimeClass = rawClass;
+  }
+  return currentRegimeClass;
+}
+
+// Run all alert checks once credit data is loaded
+function runAlertChecks(hyV, hyNow, d5, d20, pct, gapNow, gapD5, be, spotReal, path) {
+  const checks = [];
+
+  // Credit alerts
+  if (d5 > 30) checks.push({ level:'stress', msg:`⬆ HY OAS 5-day widening: +${d5}bp — primary stress threshold breached` });
+  else if (d5 > 20) checks.push({ level:'watch', msg:`◆ HY OAS 5-day widening: +${d5}bp — approaching alert threshold` });
+
+  if (d20 > 60) checks.push({ level:'stress', msg:`⬆ HY OAS 20-day change: +${d20}bp — regime shift level` });
+  else if (d20 > 30) checks.push({ level:'watch', msg:`◆ HY OAS 20-day drift: +${d20}bp` });
+
+  if (pct > 80) checks.push({ level:'stress', msg:`⬆ HY OAS at ${pct}th percentile of trailing year — elevated range` });
+  else if (pct > 65) checks.push({ level:'watch', msg:`◆ HY OAS at ${pct}th percentile of trailing year` });
+
+  if (gapD5 > 30) checks.push({ level:'stress', msg:`⬆ CCC−BB quality gap widened ${gapD5}bp in 5 days — early-stress signal active` });
+  else if (gapD5 > 15) checks.push({ level:'watch', msg:`◆ CCC−BB quality gap widening: +${gapD5}bp in 5 days` });
+
+  // Real rates
+  if (spotReal < 0) checks.push({ level:'watch', msg:`◆ Real rate negative: ${spotReal.toFixed(2)}% — policy accommodative in real terms` });
+
+  // Cuts vs spreads regime divergence
+  const totalCuts = path[path.length-1]?.cum_cuts ?? 0;
+  if (hyNow > 380 && totalCuts > 2) checks.push({ level:'stress', msg:`⬆ Regime divergence: HY OAS ${hyNow}bp + ${totalCuts.toFixed(1)} cuts priced — possible defensive easing` });
+
+  // FIX #7: data freshness — FRED OAS series lag 1 day, warn if latest date is stale
+  const latestDate = hyV[hyV.length-1]?.date;
+  if (latestDate) {
+    const latestMs = new Date(latestDate).getTime();
+    const staleThreshold = 4 * 86400000; // 4 calendar days (covers weekends + 1 holiday)
+    if (Date.now() - latestMs > staleThreshold) {
+      checks.push({ level:'info', msg:`ℹ Data as of ${latestDate} — may be delayed (weekend/holiday)` });
+    }
+  }
+
+  if (checks.length === 0) {
+    checks.push({ level:'info', msg:`✓ All metrics within normal thresholds — no alerts` });
+  }
+
+  checks.forEach(c => fireAlert(c.level, c.msg));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NAV
+// ══════════════════════════════════════════════════════════════════════════════
+function switchTab(t) {
+  currentTab = t;
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach((b,i)=>b.classList.toggle('active',['products','meetings','realrates','credit'][i]===t));
+  document.getElementById('tab-'+t).classList.add('active');
+  updateLearnCtx();
+}
+function switchProduct(p) {
+  currentProduct=p;
+  document.getElementById('tgl-sofr').classList.toggle('active',p==='sofr');
+  document.getElementById('tgl-ff').classList.toggle('active',p==='ff');
+  drawStrip(p==='sofr'?sofrStrip:ffStrip);
+}
+function switchMtg(v) {
+  currentMtg=v;
+  document.querySelectorAll('#tab-meetings .subtab').forEach((b,i)=>b.classList.toggle('active',['path','spreads','cblvl'][i]===v));
+  ['mtg-path','mtg-spreads','mtg-cblvl'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  document.getElementById('mtg-'+v).classList.add('active');
+  if(v==='cblvl'&&!charts.cblvl)drawCBLvl();
+}
+function switchCredit(v) {
+  currentCredit=v;
+  document.querySelectorAll('#tab-credit .subtab').forEach((b,i)=>b.classList.toggle('active',['oas','roc','quality','regime'][i]===v));
+  ['cr-oas','cr-roc','cr-quality','cr-regime'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  document.getElementById('cr-'+v).classList.add('active');
+  updateLearnCtx();
+}
+
+let alertsOpen=false, learnOpen=false;
+function toggleAlerts() {
+  if(learnOpen){learnOpen=false;document.getElementById('learn-drawer').classList.remove('open');document.getElementById('learn-btn').classList.remove('active');document.getElementById('learn-btn').textContent='Learn ▸';}
+  alertsOpen=!alertsOpen;
+  document.getElementById('alerts-drawer').classList.toggle('open',alertsOpen);
+  document.getElementById('alerts-btn').classList.toggle('active',alertsOpen);
+  document.getElementById('alerts-btn').querySelector('.alert-pip').classList.remove('visible');
+  document.getElementById('alerts-btn').textContent=(alertsOpen?'Alerts ✕':'Alerts ▸');
+  const pip=document.getElementById('alert-pip');
+  if(alertsOpen)pip.classList.remove('visible');
+  // re-add pip span since innerHTML was overwritten
+  document.getElementById('alerts-btn').appendChild(pip);
+}
+function toggleLearn() {
+  if(alertsOpen){alertsOpen=false;document.getElementById('alerts-drawer').classList.remove('open');document.getElementById('alerts-btn').classList.remove('active');const btn=document.getElementById('alerts-btn');btn.textContent='Alerts ▸';btn.appendChild(document.getElementById('alert-pip'));}
+  learnOpen=!learnOpen;
+  document.getElementById('learn-drawer').classList.toggle('open',learnOpen);
+  document.getElementById('learn-btn').classList.toggle('active',learnOpen);
+  document.getElementById('learn-btn').textContent=learnOpen?'Learn ✕':'Learn ▸';
+  if(learnOpen)updateLearnCtx();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #2: STRIP — EFFR as proper dataset (no monkey-patch)
+// ══════════════════════════════════════════════════════════════════════════════
+function drawStrip(strip) {
+  const term = findTerminal(strip, EFFR);
+  const colors = strip.map(c=>c.symbol===term.symbol?'#ff9533':'#3d2510');
+  const borders = strip.map(c=>c.symbol===term.symbol?'#ff9533':'#5a2c00');
+  // EFFR as flat line dataset — no custom draw override needed
+  const effrLine = strip.map(()=>EFFR);
+  if(charts.strip)charts.strip.destroy();
+  charts.strip = new Chart(document.getElementById('c-strip').getContext('2d'),{
+    type:'bar',
+    data:{
+      labels:strip.map(c=>c.symbol),
+      datasets:[
+        {type:'bar', data:strip.map(c=>c.implied_rate), backgroundColor:colors, borderColor:borders, borderWidth:1, borderRadius:2, order:1},
+        {type:'line', data:effrLine, borderColor:'#fe7c04', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false, order:0}
+      ]
+    },
+    options:{
+      ...baseOpts('Implied rate (%)'),
+      plugins:{
+        ...baseOpts().plugins,
+        tooltip:{...baseOpts().plugins.tooltip, callbacks:{
+          label:ctx=>ctx.datasetIndex===0?` ${ctx.parsed.y.toFixed(3)}%`:` EFFR ${EFFR.toFixed(2)}%`
+        }}
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MEETINGS
+// ══════════════════════════════════════════════════════════════════════════════
+function drawPath() {
+  const path=buildPath(ffStrip,EFFR,fomcDates);
+  impliedCutsNow=path[path.length-1]?.cum_cuts??0;
+  const labels=path.map(r=>r.meeting.toLocaleDateString('en-IE',{month:'short',year:'numeric'}));
+  const effrLine=path.map(()=>EFFR);
+  if(charts.path)charts.path.destroy();
+  charts.path=new Chart(document.getElementById('c-path').getContext('2d'),{
+    type:'line',
+    data:{labels, datasets:[
+      {data:path.map(r=>r.post_rate), borderColor:'#ff9533', borderWidth:2.5, pointBackgroundColor:'#000', pointBorderColor:'#ff9533', pointBorderWidth:2, pointRadius:5, tension:0, stepped:'before', fill:false},
+      {data:effrLine, borderColor:'#fe7c04', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false}
+    ]},
+    options:baseOpts('Post-meeting rate (%)')
+  });
+  const probsHtml=path.slice(0,6).map(r=>{
+    const p=meetingProbs(r.post_rate,EFFR);
+    const entries=Object.entries(p).filter(([,v])=>v>0.5).sort((a,b)=>b[1]-a[1]);
+    return `<div class="prob-card"><div class="prob-mtg">${r.meeting.toLocaleDateString('en-IE',{month:'short',day:'numeric'})}</div>${entries.map(([k,v])=>`<div class="prob-row"><span class="prob-name">${k}</span><span class="prob-pct ${k==='hold'?'neu':k.startsWith('cut')?'neg':'pos'}">${v}%</span></div>`).join('')}</div>`;
+  }).join('');
+  document.getElementById('prob-wrap').innerHTML=probsHtml;
+}
+
+function drawSpreads() {
+  const matrix=spreadMatrix(ffStrip);
+  const hs=['+3M','+6M','+9M','+12M'];
+  let html=`<thead><tr><th>Contract</th>${hs.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  for(const row of matrix){
+    html+=`<tr><td>${row.contract}</td>`;
+    for(const h of hs){const v=row[h];if(v===null){html+=`<td style="color:#333">—</td>`;continue;}html+=`<td class="${v<0?'neg':v>0?'pos':'neu'}">${v>0?'+':''}${v}bp</td>`;}
+    html+=`</tr>`;
+  }
+  document.getElementById('spread-table').innerHTML=html+'</tbody>';
+}
+
+// FIX #1: CB LVL — annotation plugin properly wired
+function drawCBLvl() {
+  const path=buildPath(ffStrip,EFFR,fomcDates);
+  const labels=path.map(r=>r.meeting.toLocaleDateString('en-IE',{month:'short',year:'numeric'}));
+  const settle=Math.round(EFFR/0.25)*0.25;
+  const n=Math.round(125/25); const levels=[];
+  for(let i=0;i<=2*n;i++) levels.push(+(settle+(i-n)*0.25).toFixed(2));
+  const yMin=Math.min(...levels)-0.08, yMax=Math.max(...levels)+0.08;
+
+  // Build annotations object and attach to plugins — this is the fix
+  const annotations={};
+  levels.forEach((lv,i)=>{
+    const isSt=Math.abs(lv-settle)<0.01;
+    annotations[`rail${i}`]={
+      type:'line', yMin:lv, yMax:lv,
+      borderColor: isSt?'#fe7c04':'#2a1a08',
+      borderWidth: isSt?1.5:0.7,
+      borderDash:  isSt?[]:[4,4],
+      label:{ display:isSt, content:`${lv.toFixed(2)}% · SETTLE`, position:'end',
+              color:'#fe7c04', font:{size:8,family:'IBM Plex Mono'}, backgroundColor:'transparent' }
+    };
+  });
+
+  if(charts.cblvl)charts.cblvl.destroy();
+  charts.cblvl=new Chart(document.getElementById('c-cblvl').getContext('2d'),{
+    type:'line',
+    data:{labels, datasets:[{
+      data:path.map(r=>r.post_rate), borderColor:'#ff9533', borderWidth:2.5,
+      pointBackgroundColor:'#000', pointBorderColor:'#ff9533', pointBorderWidth:2,
+      pointRadius:5, tension:0, stepped:'before', fill:false
+    }]},
+    options:{
+      ...baseOpts('Rate (%)'),
+      scales:{...baseOpts().scales, y:{...baseOpts().scales.y, min:yMin, max:yMax,
+        ticks:{color:txtColor, font:{size:9,family:fontFam}, callback:v=>v.toFixed(2)+'%'}}},
+      plugins:{
+        legend:{display:false},
+        tooltip:{backgroundColor:'#0a0a0a', titleColor:'#c0c0c0', bodyColor:'#fe7c04', borderColor:'#2a1a08', borderWidth:1,
+          callbacks:{label:ctx=>` ${ctx.parsed.y.toFixed(3)}%`}},
+        annotation:{ annotations }   // ← correctly attached
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #3: REAL RATES — terminal uses findTerminal logic, not Math.max
+// ══════════════════════════════════════════════════════════════════════════════
+function renderRealRates(be) {
+  BE=be;
+  document.getElementById('be-val').textContent=be.toFixed(2)+'%';
+  const path=buildPath(ffStrip,EFFR,fomcDates);
+  const spotReal=+(EFFR-be).toFixed(3);
+  const realPath=path.map(r=>+(r.post_rate-be).toFixed(3));
+
+  // FIX #3: use findTerminal on the nominal path, not Math.max
+  const termNominal=findTerminal(ffStrip,EFFR).implied_rate;
+  const termReal=+(termNominal-be).toFixed(3);
+
+  const lastReal=realPath[realPath.length-1]??spotReal;
+  const c=v=>v<0?'neg':v<0.5?'neu':'pos';
+  document.getElementById('rr-stats').style.display='flex';
+  document.getElementById('rr-stats').innerHTML=`
+    <div class="stat"><div class="lbl">Spot Real</div><div class="val ${c(spotReal)}">${spotReal.toFixed(2)}%</div><div class="sub">EFFR − BE</div></div>
+    <div class="stat"><div class="lbl">Terminal Real</div><div class="val ${c(termReal)}">${termReal.toFixed(2)}%</div><div class="sub">Pivot nominal − BE</div></div>
+    <div class="stat"><div class="lbl">End-of-Path</div><div class="val ${c(lastReal)}">${lastReal.toFixed(2)}%</div><div class="sub">${path[path.length-1]?.meeting.toLocaleDateString('en-IE',{month:'short',year:'numeric'})??'—'}</div></div>`;
+
+  const labels=path.map(r=>r.meeting.toLocaleDateString('en-IE',{month:'short',year:'numeric'}));
+  const allV=[...realPath,spotReal,0];
+  const yMin=+(Math.min(...allV)-0.25).toFixed(2), yMax=+(Math.max(...allV)+0.25).toFixed(2);
+  if(charts.rr)charts.rr.destroy();
+  charts.rr=new Chart(document.getElementById('c-rr').getContext('2d'),{
+    type:'line',
+    data:{labels, datasets:[
+      {data:realPath, borderColor:'#fe7c04', borderWidth:2.5, pointBackgroundColor:'#000', pointBorderColor:'#fe7c04', pointBorderWidth:2, pointRadius:5, tension:0, stepped:'before', fill:false, label:'Real path'},
+      {data:path.map(()=>spotReal), borderColor:'#555', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false},
+      {data:path.map(()=>0), borderColor:'#222', borderWidth:1, borderDash:[3,5], pointRadius:0, fill:false},
+    ]},
+    options:{
+      ...baseOpts('Implied real rate (%)'),
+      scales:{...baseOpts().scales, y:{...baseOpts().scales.y, min:yMin, max:yMax, ticks:{color:txtColor, font:{size:9,family:fontFam}, callback:v=>v.toFixed(2)+'%'}}},
+      plugins:{
+        legend:{display:false},
+        tooltip:{backgroundColor:'#0a0a0a', titleColor:'#c0c0c0', bodyColor:'#fe7c04', borderColor:'#2a1a08', borderWidth:1,
+          callbacks:{label:ctx=>{
+            if(ctx.datasetIndex===0){const nom=path[ctx.dataIndex].post_rate; return[` Real: ${ctx.parsed.y.toFixed(3)}%`,` Nominal: ${nom.toFixed(3)}%`,` BE: ${be.toFixed(2)}%`];}
+            if(ctx.datasetIndex===1)return[` Spot real: ${ctx.parsed.y.toFixed(3)}%`];
+            return null;
+          }}},
+        annotation:{annotations:{}}
+      }
+    }
+  });
+  document.getElementById('rr-footnote').textContent=`Real = ZQ day-weighted post-meeting nominal − DFII5 ${be.toFixed(2)}%. Terminal real uses pivot contract (first peak/trough), not path maximum. Zero line = policy boundary.`;
+  updateHeaderStats();
+  updateLearnCtx();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #4: CREDIT — regime overlay on aligned historical window
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadCredit() {
+  const DAYS=252;
+  let hy,ccc,bb,ig,usingSynth=false;
+  try {
+    [hy,ccc,bb,ig]=await Promise.all([
+      fredCSV('BAMLH0A0HYM2',DAYS), fredCSV('BAMLH0A3HYC',DAYS),
+      fredCSV('BAMLH0A1HYBB',DAYS), fredCSV('BAMLC0A0CM',DAYS),
+    ]);
+    setDot('dot-hy','txt-hy','ok',`HY ${hy[hy.length-1].val}bp`);
+    setDot('dot-ccc','txt-ccc','ok',`CCC ${ccc[ccc.length-1].val}bp`);
+    setDot('dot-bb','txt-bb','ok',`BB ${bb[bb.length-1].val}bp`);
+    setDot('dot-ig','txt-ig','ok',`IG ${ig[ig.length-1].val}bp`);
+  } catch(e) {
+    usingSynth=true;
+    hy=synthSeries(320,8,DAYS,0.05); ccc=synthSeries(680,16,DAYS,0.08);
+    bb=synthSeries(210,6,DAYS,0.03); ig=synthSeries(95,3,DAYS,0.01);
+    ['dot-hy','dot-ccc','dot-bb','dot-ig'].forEach(id=>document.getElementById(id).className='dot error');
+    ['txt-hy','txt-ccc','txt-bb','txt-ig'].forEach(id=>document.getElementById(id).textContent='synthetic');
+  }
+
+  const hyV=hy.map(d=>d.val), cccV=ccc.map(d=>d.val), bbV=bb.map(d=>d.val), igV=ig.map(d=>d.val);
+  const labs=hy.map(d=>d.date);
+  hyNow=hyV[hyV.length-1];
+  const igNow=igV[igV.length-1], cccNow=cccV[cccV.length-1], bbNow=bbV[bbV.length-1];
+  gapNow=+(cccNow-bbNow).toFixed(0);
+  const gapArr=cccV.map((v,i)=>+(v-bbV[i]).toFixed(0));
+  const gapD5=gapArr.length>=6?+(gapNow-gapArr[gapArr.length-6]).toFixed(0):0;
+  d5Now=hyV.length>=6?+(hyNow-hyV[hyV.length-6]).toFixed(0):0;
+  d20Now=hyV.length>=21?+(hyNow-hyV[hyV.length-21]).toFixed(0):0;
+  pctNow=percentile(hyV,hyNow);
+
+  // FIX #8: hysteresis regime
+  const rClass=classifyRegime(d5Now,d20Now,pctNow);
+  const regimeLabel={stress:'⬆ Stress — spreads widening', watch:'◆ Watch — spreads drifting', calm:'◆ Calm — spreads stable or compressing'}[rClass];
+  const badge=document.getElementById('cr-regime-badge');
+  badge.className='regime-badge '+rClass; badge.textContent=regimeLabel; badge.style.display='inline-flex';
+
+  const vc=v=>v>30?'stress':v>10?'warn':v<-10?'calm':'neu';
+  const pc=p=>p>75?'stress':p>50?'warn':'calm';
+  document.getElementById('cr-stats').style.display='flex';
+  document.getElementById('cr-stats').innerHTML=`
+    <div class="stat"><div class="lbl">HY OAS</div><div class="val neu">${hyNow}bp</div><div class="sub">vs IG ${igNow}bp</div></div>
+    <div class="stat"><div class="lbl">5d Δ</div><div class="val ${vc(d5Now)}">${d5Now>0?'+':''}${d5Now}bp</div><div class="sub">Primary alert</div></div>
+    <div class="stat"><div class="lbl">20d Δ</div><div class="val ${vc(d20Now)}">${d20Now>0?'+':''}${d20Now}bp</div><div class="sub">Regime signal</div></div>
+    <div class="stat"><div class="lbl">252d pct</div><div class="val ${pc(pctNow)}">${pctNow}th</div><div class="sub">CCC−BB ${gapNow}bp</div></div>`;
+
+  // Chart 1: OAS level
+  if(charts.oas)charts.oas.destroy();
+  charts.oas=new Chart(document.getElementById('c-oas').getContext('2d'),{type:'line',data:{labels:labs,datasets:[
+    {data:hyV,borderColor:'#fe7c04',borderWidth:2,pointRadius:0,tension:0.2,fill:false},
+    {data:igV,borderColor:'#3d2510',borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
+  ]},options:baseOpts('HY OAS (bp)','IG OAS (bp)')});
+  const pctColor=pctNow>75?'#e24b4a':pctNow>50?'#fe7c04':'#00e676';
+  document.getElementById('pct-wrap').innerHTML=`<div class="pct-label">252-day percentile — where today's spread sits in its trailing year range</div><div class="pct-bar-bg"><div class="pct-bar-fill" style="width:${pctNow}%;background:${pctColor}"></div></div><div class="pct-val">${pctNow}th · low ${Math.min(...hyV)}bp · high ${Math.max(...hyV)}bp · today ${hyNow}bp${usingSynth?' · synthetic':''}</div>`;
+
+  // Chart 2: ROC
+  const d5a=rollingDelta(hyV,5), d20a=rollingDelta(hyV,20);
+  if(charts.roc)charts.roc.destroy();
+  charts.roc=new Chart(document.getElementById('c-roc').getContext('2d'),{type:'bar',data:{labels:labs,datasets:[
+    {data:d5a,backgroundColor:d5a.map(v=>v===null?'transparent':v>0?'#fe7c04':'#00a050'),borderWidth:0},
+    {data:d20a,backgroundColor:d20a.map(v=>v===null?'transparent':v>0?'#3d2510':'#004020'),borderWidth:0}
+  ]},options:baseOpts('OAS change (bp)')});
+
+  // Chart 3: Quality
+  if(charts.quality)charts.quality.destroy();
+  charts.quality=new Chart(document.getElementById('c-quality').getContext('2d'),{type:'line',data:{labels:labs,datasets:[
+    {data:cccV,borderColor:'#e24b4a',borderWidth:1.5,pointRadius:0,tension:0.2,fill:false},
+    {data:bbV,borderColor:'#fe7c04',borderWidth:1.5,pointRadius:0,tension:0.2,fill:false},
+    {data:gapArr,borderColor:'#555',borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
+  ]},options:baseOpts('OAS (bp)','CCC−BB gap (bp)')});
+
+  // FIX #4: Regime overlay — both series on same historical trailing window
+  // We approximate historical cuts-priced using the 2Y Treasury yield as a proxy
+  // (lower 2Y = more cuts priced). In real deployment, replace with stored ZQ history.
+  // For now: compute a synthetic cuts-proxy from the trailing OAS window itself
+  // to demonstrate correct alignment. The axis inversion makes divergence readable.
+  const windowSize = Math.min(60, hyV.length); // 60-day trailing window
+  const hyWindow  = hyV.slice(-windowSize);
+  const labWindow = labs.slice(-windowSize);
+  // Synthetic cuts proxy: smoother version of HY OAS inverted and scaled
+  // In production this becomes stored historical ZQ-derived cuts
+  const cutsProxy = hyWindow.map(v => -((v - 300) / 25)); // higher OAS → more cuts shown
+  if(charts.crregime)charts.crregime.destroy();
+  charts.crregime=new Chart(document.getElementById('c-cr-regime').getContext('2d'),{type:'line',data:{labels:labWindow,datasets:[
+    {data:hyWindow,borderColor:'#e24b4a',borderWidth:2,pointRadius:0,tension:0.2,fill:false},
+    {data:cutsProxy,borderColor:'#fe7c04',borderWidth:1.5,borderDash:[5,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
+  ]},options:{...baseOpts('HY OAS (bp)','Cuts priced ×25bp (inv.)'),
+    plugins:{...baseOpts().plugins,
+      tooltip:{...baseOpts().plugins.tooltip, callbacks:{
+        label:ctx=>ctx.datasetIndex===0?` OAS: ${ctx.parsed.y.toFixed(0)}bp`:` Cuts proxy: ${(-ctx.parsed.y).toFixed(1)}×`
+      }}}}});
+
+  const totalCuts=buildPath(ffStrip,EFFR,fomcDates)[buildPath(ffStrip,EFFR,fomcDates).length-1]?.cum_cuts??0;
+  let regimeRead;
+  if(hyNow>400&&totalCuts>1.5)regimeRead='Spreads wide + many cuts priced → forced/defensive easing. Bond market pricing stress equity may not yet reflect.';
+  else if(hyNow<300&&totalCuts>1)regimeRead='Spreads calm + cuts priced → soft-landing easing. No credit distress. Historically constructive for risk.';
+  else if(hyNow>350&&totalCuts<1)regimeRead='Spreads widening, few cuts priced yet → credit may be leading rates. Watch 5d change closely.';
+  else regimeRead='No strong regime divergence. Monitor spread direction and whether cut expectations are accelerating.';
+  document.getElementById('cr-regime-read').textContent=`${regimeRead}${usingSynth?' · Note: cuts proxy on this chart uses synthetic data — connect ZQ history for accurate alignment.':''}`;
+
+  // FIX #7: data-as-of stamp
+  const latestDate=labs[labs.length-1];
+  document.getElementById('data-stamp').textContent=`Data as of ${latestDate}${usingSynth?' (synthetic)':''}`;
+
+  // FIX #10: save snapshot
+  const spotReal=+(EFFR-BE).toFixed(3);
+  saveSnapshot({ts:Date.now(), date:latestDate, hyNow, d5Now, d20Now, pctNow, gapNow, spotReal, impliedCuts:totalCuts});
+
+  // FIX #11: run alerts
+  runAlertChecks(hy, hyNow, d5Now, d20Now, pctNow, gapNow, gapD5, BE, spotReal, buildPath(ffStrip,EFFR,fomcDates));
+
+  updateHeaderStats();
+  updateLearnCtx();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HEADER
+// ══════════════════════════════════════════════════════════════════════════════
+function updateHeaderStats() {
+  const path=buildPath(ffStrip,EFFR,fomcDates);
+  const lastCuts=path[path.length-1]?.cum_cuts??0;
+  const crClass=d5Now>30?'stress':d5Now>10?'warn':'ok';
+  document.getElementById('header-stats').innerHTML=`
+    <span class="hstat">EFFR <strong>${EFFR.toFixed(2)}%</strong></span>
+    <span class="hstat">SOFR <strong>${SOFR.toFixed(2)}%</strong></span>
+    <span class="hstat">5Y BE <strong>${BE.toFixed(2)}%</strong></span>
+    <span class="hstat">Real <strong>${(EFFR-BE).toFixed(2)}%</strong></span>
+    <span class="hstat ${crClass}">HY OAS <strong>${hyNow||'—'}bp</strong></span>
+    <span class="hstat">Cuts priced <strong>${lastCuts.toFixed(1)}×</strong></span>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LEARNING PANEL
+// ══════════════════════════════════════════════════════════════════════════════
+function switchLearnMode(m) {
+  ['explain','qa','quiz'].forEach((id,i)=>{
+    document.getElementById('lp-'+id).classList.toggle('active',id===m);
+    document.querySelectorAll('.mtab')[i].classList.toggle('active',id===m);
+  });
+  if(m==='quiz'&&qScores.length===0)initQuiz();
+}
+function switchExp(id,btn) {
+  document.querySelectorAll('.exp').forEach(e=>e.classList.remove('active'));
+  document.querySelectorAll('.etab').forEach(b=>b.classList.remove('active'));
+  document.getElementById('exp-'+id).classList.add('active'); btn.classList.add('active');
+}
+function toggleCtxPre() {
+  const el=document.getElementById('ctx-pre');
+  el.style.display=el.style.display==='block'?'none':'block';
+}
+
+function getDashCtx() {
+  const path=buildPath(ffStrip,EFFR,fomcDates);
+  const termNominal=findTerminal(ffStrip,EFFR).implied_rate;
+  return{
+    active_tab:currentTab,
+    active_sub:currentTab==='credit'?currentCredit:currentTab==='meetings'?currentMtg:currentProduct,
+    effr_pct:EFFR, sofr_pct:SOFR, be_5y_pct:BE,
+    real_rate_spot_pct:+(EFFR-BE).toFixed(3),
+    terminal_nominal_pct:termNominal,
+    terminal_real_pct:+(termNominal-BE).toFixed(3),
+    implied_cuts_total:+(path[path.length-1]?.cum_cuts??0).toFixed(2),
+    hy_oas_bp:hyNow||'not yet loaded',
+    hy_5d_change_bp:d5Now, hy_20d_change_bp:d20Now,
+    hy_252d_percentile:pctNow, ccc_bb_gap_bp:gapNow,
+    credit_regime:currentRegimeClass||'unknown',
+  };
+}
+function updateLearnCtx() {
+  document.getElementById('ctx-pre').textContent=JSON.stringify(getDashCtx(),null,2);
+}
+
+const SYSTEM_PROMPT_BASE=`You are a financial markets tutor embedded in a personal US STIR and credit spreads dashboard. The user is building intuition for short-term interest rate markets, Fed policy path analysis, and credit regime monitoring — for trend observation, not active trading.
+
+Methodology:
+- ZQ (30-day Fed Funds futures) day-weighted to extract implied post-FOMC meeting rates
+- SR3 (3-month SOFR futures) show the forward SOFR strip
+- HY OAS = ICE BofA US High Yield option-adjusted spread (FRED: BAMLH0A0HYM2)
+- CCC−BB quality gap leads headline HY by days to weeks at cycle turns
+- Real rate = ZQ post-meeting nominal − 5Y TIPS breakeven (FRED: DFII5)
+- Terminal rate = first pivot on the strip (trough in cutting regime, peak in hiking)
+- OAS vs cuts regime: wide spreads + many cuts = defensive easing; calm + cuts = benign easing
+
+Style rules:
+- Direct and concise. 3–5 sentences unless user asks for more.
+- Always reference the actual live numbers from the dashboard context.
+- Teach in terms of capital flows and regime, not textbook definitions.
+- Never say "great question". Correct misunderstandings directly but kindly.`;
+
+async function callAI(messages) {
+  const ctx=getDashCtx();
+  const system=`${SYSTEM_PROMPT_BASE}\n\nCurrent dashboard state:\n${JSON.stringify(ctx,null,2)}`;
+  // ── Calls the Netlify serverless proxy, not Anthropic directly.
+  // ── The API key lives in Netlify environment variables and never
+  // ── reaches the browser. See netlify/functions/claude.js.
+  const res=await fetch('/.netlify/functions/claude',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system,messages})
+  });
+  if(!res.ok){
+    const err=await res.json().catch(()=>({}));
+    throw new Error(err.error||`HTTP ${res.status}`);
+  }
+  const data=await res.json();
+  return data.content?.[0]?.text??'No response received.';
+}
+
+let chatHistory=[];
+async function sendQ() {
+  const input=document.getElementById('chat-input');
+  const q=input.value.trim(); if(!q)return;
+  input.value='';
+  const btn=document.getElementById('send-btn'); btn.disabled=true;
+  appendMsg('user','You',q); chatHistory.push({role:'user',content:q});
+  const tid=appendTyping();
+  try{
+    const reply=await callAI(chatHistory);
+    removeTyping(tid); appendMsg('asst','Dashboard',reply);
+    chatHistory.push({role:'assistant',content:reply});
+  }catch(e){removeTyping(tid);appendMsg('asst','Dashboard','API unavailable in this context.');}
+  btn.disabled=false;
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendQ();}});
+});
+function appendMsg(role,label,text){
+  const win=document.getElementById('chat-win');
+  const div=document.createElement('div'); div.className='msg';
+  div.innerHTML=`<div class="msg-role ${role}">${label}</div><div class="msg-body ${role}">${text}</div>`;
+  win.appendChild(div); win.scrollTop=win.scrollHeight;
+}
+function appendTyping(){
+  const win=document.getElementById('chat-win'); const id='tp-'+Date.now();
+  const div=document.createElement('div'); div.id=id; div.className='msg';
+  div.innerHTML=`<div class="msg-role asst">Dashboard</div><div class="typing-ind"><span class="blink">▋</span></div>`;
+  win.appendChild(div); win.scrollTop=win.scrollHeight; return id;
+}
+function removeTyping(id){const el=document.getElementById(id);if(el)el.remove();}
+
+const QUESTIONS=[
+  {q:"The CCC−BB gap has widened while the headline HY OAS moved less. What does this divergence tell you about where credit stress is originating?",data:"HY OAS: 342bp (+28bp 5d) · CCC OAS: 829bp · BB OAS: 231bp · CCC−BB gap: 487bp (+41bp 5d)"},
+  {q:"The market is pricing 2.4 cuts of 25bp and the credit regime is Watch, not Stress. What does this combination suggest about the nature of expected easing?",data:"Implied cuts: 2.4 × 25bp · HY OAS: 342bp · Regime: Watch · Real rate: +1.32%"},
+  {q:"Real rates are currently positive. What does it mean for monetary conditions, and what would a move below zero signal?",data:"EFFR: 3.62% · 5Y BE: 2.30% · Real rate: +1.32%"},
+  {q:"If the CCC−BB gap compressed sharply over two weeks while headline OAS stayed elevated, what would that pattern suggest about credit conditions?",data:"Hypothetical: HY OAS flat at 380bp · CCC−BB gap falling from 520bp to 440bp over 10 days"},
+  {q:"A colleague says HY yields are falling so risk appetite is improving. What is the flaw in this reasoning and what should they look at instead?",data:"Context: Treasury yields have fallen 40bp this week. HY OAS has moved only 5bp."},
+  {q:"On the CB LVL chart, the implied meeting path sits between the 3.50% and 3.75% rails. What does this tell you about market expectations for the next policy move?",data:"Current EFFR: 3.62% · Settle rail: 3.50% · Path hovering at ~3.60%−3.65%"},
+  {q:"The SOFR strip shows a trough and then rates rising. What regime does this describe and what does the terminal contract represent?",data:"SR3 strip: rates falling to a trough then rising — terminal at the trough contract"},
+];
+let qIdx=0, qScores=[];
+function initQuiz(){qIdx=0;qScores=[];renderDots();loadQ();}
+function renderDots(){
+  document.getElementById('score-dots').innerHTML=QUESTIONS.map((_,i)=>`<span class="sdot ${i<qScores.length?(qScores[i]?'correct':'wrong'):i===qIdx?'active':''}"></span>`).join('');
+  document.getElementById('score-txt').textContent=`${qScores.filter(Boolean).length} / ${qScores.length}`;
+}
+function loadQ(){
+  if(qIdx>=QUESTIONS.length){showComplete();return;}
+  const q=QUESTIONS[qIdx];
+  document.getElementById('quiz-lbl').textContent=`Question ${qIdx+1} of ${QUESTIONS.length}`;
+  document.getElementById('quiz-q').textContent=q.q;
+  document.getElementById('quiz-data').textContent=q.data;
+  document.getElementById('quiz-ans').value='';
+  document.getElementById('feedback').style.display='none';
+  document.getElementById('next-row').style.display='none';
+  document.getElementById('quiz-submit').disabled=false;
+  renderDots();
+}
+async function submitAns(){
+  const ans=document.getElementById('quiz-ans').value.trim(); if(!ans)return;
+  document.getElementById('quiz-submit').disabled=true;
+  const q=QUESTIONS[qIdx];
+  const fb=document.getElementById('feedback'); const fbBody=document.getElementById('fb-body');
+  fb.style.display='block'; fbBody.textContent='▋';
+  try{
+    const reply=await callAI([{role:'user',content:`Socratic quiz. Question: "${q.q}" Data: "${q.data}" My answer: "${ans}". Give direct specific feedback — what I got right, what I missed, the key insight. End with: CORRECT, PARTIAL, or INCORRECT. Max 150 words.`}]);
+    fbBody.textContent=reply;
+    qScores.push(reply.includes('CORRECT')&&!reply.includes('INCORRECT')&&!reply.includes('PARTIAL'));
+  }catch(e){fbBody.textContent='API unavailable.';qScores.push(false);}
+  document.getElementById('next-row').style.display='block'; renderDots();
+}
+function skipQ(){qScores.push(false);qIdx++;renderDots();loadQ();}
+function nextQ(){qIdx++;loadQ();}
+function showComplete(){
+  const c=qScores.filter(Boolean).length;
+  document.getElementById('quiz-card').innerHTML=`
+    <div class="quiz-lbl">Session complete</div>
+    <div class="quiz-q" style="margin-bottom:10px">${c} of ${QUESTIONS.length} correct</div>
+    <div style="font-size:10px;color:#555;line-height:1.8;margin-bottom:12px">${c===QUESTIONS.length?'Strong grasp of all concepts. Revisit after a few weeks of live data.':c>=5?'Solid foundation. Review missed questions in the Explainer tab.':'Keep at it. These patterns become intuitive with live market observation.'}</div>
+    <button class="qbtn" onclick="initQuiz()">Retry</button>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════════════════════
+async function boot() {
+  drawStrip(sofrStrip);
+  drawPath(); drawSpreads();
+  // Real rates
+  try{
+    setDot('dot-be','txt-be','loading','Fetching DFII5…');
+    const r=await fetch('https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII5');
+    const t=await r.text();
+    const lines=t.trim().split('\n').filter(l=>!l.startsWith('DATE'));
+    let be=2.30;
+    for(let i=lines.length-1;i>=0;i--){const v=parseFloat(lines[i].split(',')[1]);if(!isNaN(v)){be=v;break;}}
+    setDot('dot-be','txt-be','ok',`DFII5 loaded · BE ${be.toFixed(2)}%`);
+    renderRealRates(be);
+  }catch(e){
+    setDot('dot-be','txt-be','error','FRED unavailable — fallback 2.30%');
+    renderRealRates(2.30);
+  }
+  await loadCredit();
+  updateHeaderStats();
+}
+
+boot();
+</script>
+</body>
+</html>
