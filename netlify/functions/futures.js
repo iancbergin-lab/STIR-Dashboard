@@ -14,13 +14,14 @@ function addM(y, m, n) {
 }
 function dim(y, m) { return new Date(y, m, 0).getDate(); }
 
-// ZQ: monthly, current month + 17 more = 18 contracts
+// 30-Day Fed Funds: monthly, current month + 17 more = 18 contracts.
+// CME product code is "FF" (Globex symbol is "ZQ" but Massive uses product codes).
 function zqTickers() {
   const now = new Date();
   let y = now.getFullYear(), m = now.getMonth() + 1;
   const out = [];
   for (let i = 0; i < 18; i++) {
-    out.push(`ZQ${MC[m]}${y % 10}`);
+    out.push(`FF${MC[m]}${y % 10}`);
     const n = addM(y, m, 1); y = n.y; m = n.m;
   }
   return out;
