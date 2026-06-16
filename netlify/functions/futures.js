@@ -15,13 +15,13 @@ function addM(y, m, n) {
 function dim(y, m) { return new Date(y, m, 0).getDate(); }
 
 // 30-Day Fed Funds: monthly, current month + 17 more = 18 contracts.
-// CME product code is "FF" (Globex symbol is "ZQ" but Massive uses product codes).
+// Massive uses ZQ (CME Globex symbol), confirmed working via direct API test.
 function zqTickers() {
   const now = new Date();
   let y = now.getFullYear(), m = now.getMonth() + 1;
   const out = [];
   for (let i = 0; i < 18; i++) {
-    out.push(`FF${MC[m]}${y % 10}`);
+    out.push(`ZQ${MC[m]}${y % 10}`);
     const n = addM(y, m, 1); y = n.y; m = n.m;
   }
   return out;
@@ -56,8 +56,7 @@ function symbolToExpiry(sym) {
 // Returns { settle, implied_rate } or null if no data.
 async function fetchAgg(ticker, fromDate, toDate, apiKey) {
   const url = `${BASE}/futures/v1/aggs/${encodeURIComponent(ticker)}` +
-    `?multiplier=1&timespan=day&from=${fromDate}&to=${toDate}` +
-    `&sort=desc&limit=1&apiKey=${apiKey}`;
+    `?multiplier=1&timespan=day&from=${fromDate}&to=${toDate}&apiKey=${apiKey}`;
   const res = await fetch(url);
   if (!res.ok) {
     // 404 = contract not listed; skip silently
