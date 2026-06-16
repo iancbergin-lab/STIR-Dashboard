@@ -67,7 +67,7 @@ async function fetchAgg(ticker, fromDate, toDate, apiKey) {
   const rows = json.results || json.result || [];
   if (!rows.length) return null;
   // Field names follow Polygon convention: c = close, v = volume
-  const close = rows[0].c ?? rows[0].close ?? rows[0].settlement_price;
+  const close = rows[0].settlement_price ?? rows[0].close;
   if (close == null) return null;
   return { settle: +close, implied_rate: +(100 - close).toFixed(5) };
 }
