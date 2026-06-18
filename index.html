@@ -98,7 +98,7 @@ body { background: #000; color: #d0d0d0; font-family: 'IBM Plex Mono','Courier N
 .subtab {
   padding: 4px 12px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
   cursor: pointer; border: 1px solid #1a1a1a; border-radius: 3px;
-  background: none; color: #555; font-family: inherit; transition: all 0.12s;
+  background: none; color: #aaa; font-family: inherit; transition: all 0.12s;
 }
 .subtab.active { background: #0a0400; color: #fe7c04; border-color: #3d2510; }
 
@@ -204,18 +204,18 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
 .chat-win { background: #030303; border: 1px solid #141414; border-radius: 4px; height: 280px; overflow-y: auto; padding: 10px; margin-bottom: 8px; scroll-behavior: smooth; }
 .msg { margin-bottom: 10px; }
 .msg-role { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; }
-.msg-role.user { color: #444; } .msg-role.asst { color: #fe7c04; }
+.msg-role.user { color: #888; } .msg-role.asst { color: #fe7c04; }
 .msg-body { font-size: 10px; line-height: 1.8; color: #aaa; white-space: pre-wrap; }
-.msg-body.user { color: #666; }
-.typing-ind { color: #333; font-size: 10px; }
+.msg-body.user { color: #bbb; }
+.typing-ind { color: #888; font-size: 10px; }
 .blink { animation: blink 0.8s infinite; }
 .input-row { display: flex; gap: 6px; }
 .chat-input { flex: 1; background: #080808; border: 1px solid #141414; border-radius: 3px; color: #c0c0c0; font-family: inherit; font-size: 10px; padding: 7px 10px; outline: none; resize: none; transition: border-color 0.15s; }
 .chat-input:focus { border-color: #3d2510; }
 .send-btn { padding: 7px 12px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border: 1px solid #3d2510; border-radius: 3px; background: #0a0400; color: #fe7c04; font-family: inherit; white-space: nowrap; }
 .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.ctx-toggle { font-size: 9px; color: #2a2a2a; margin-bottom: 6px; cursor: pointer; }
-.ctx-toggle:hover { color: #444; }
+.ctx-toggle { font-size: 9px; color: #888; margin-bottom: 6px; cursor: pointer; }
+.ctx-toggle:hover { color: #bbb; }
 .ctx-pre { background: #060606; border: 1px solid #0d0d0d; border-radius: 3px; padding: 7px 9px; margin-bottom: 7px; font-size: 8px; color: #333; line-height: 1.6; display: none; }
 .quiz-card { background: #060606; border: 1px solid #141414; border-radius: 4px; padding: 12px 14px; }
 .quiz-lbl { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: #444; margin-bottom: 6px; }
@@ -1216,12 +1216,13 @@ Style rules:
 async function callAI(messages) {
   const ctx=getDashCtx();
   const system=`${SYSTEM_PROMPT_BASE}\n\nCurrent dashboard state:\n${JSON.stringify(ctx,null,2)}`;
-  const res=await fetch('https://api.anthropic.com/v1/messages',{
+  const res=await fetch('/.netlify/functions/ask',{
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system,messages})
+    body:JSON.stringify({system,messages})
   });
   const data=await res.json();
-  return data.content?.[0]?.text??'No response received.';
+  if(!res.ok) throw new Error(data.error||`HTTP ${res.status}`);
+  return data.text||'No response received.';
 }
 
 let chatHistory=[];
