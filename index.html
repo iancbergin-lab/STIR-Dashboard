@@ -203,11 +203,11 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
 .exp .rule { font-size: 9px; color: #444; border-top: 1px solid #0d0d0d; padding-top: 6px; margin-top: 6px; line-height: 1.6; }
 .chat-win { background: #030303; border: 1px solid #141414; border-radius: 4px; height: 280px; overflow-y: auto; padding: 10px; margin-bottom: 8px; scroll-behavior: smooth; }
 .msg { margin-bottom: 10px; }
-.msg-role { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; }
+.msg-role { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; }
 .msg-role.user { color: #888; } .msg-role.asst { color: #fe7c04; }
-.msg-body { font-size: 10px; line-height: 1.8; color: #aaa; white-space: pre-wrap; }
-.msg-body.user { color: #bbb; }
-.typing-ind { color: #888; font-size: 10px; }
+.msg-body { font-size: 12px; line-height: 1.8; color: #ccc; white-space: pre-wrap; }
+.msg-body.user { color: #ddd; }
+.typing-ind { color: #aaa; font-size: 12px; }
 .blink { animation: blink 0.8s infinite; }
 .input-row { display: flex; gap: 6px; }
 .chat-input { flex: 1; background: #080808; border: 1px solid #141414; border-radius: 3px; color: #c0c0c0; font-family: inherit; font-size: 10px; padding: 7px 10px; outline: none; resize: none; transition: border-color 0.15s; }
@@ -1178,9 +1178,10 @@ function toggleCtxPre() {
 function getDashCtx() {
   const path=buildPath(ffStrip,EFFR,fomcDates);
   const termNominal=findTerminal(ffStrip,EFFR).implied_rate;
-  return{
+  const activeSub=currentTab==='credit'?currentCredit:currentTab==='meetings'?currentMtg:currentProduct;
+  const ctx={
     active_tab:currentTab,
-    active_sub:currentTab==='credit'?currentCredit:currentTab==='meetings'?currentMtg:currentProduct,
+    active_sub:activeSub,
     effr_pct:EFFR, sofr_pct:SOFR, be_5y_pct:BE,
     real_rate_spot_pct:+(EFFR-BE).toFixed(3),
     terminal_nominal_pct:termNominal,
@@ -1191,6 +1192,21 @@ function getDashCtx() {
     hy_252d_percentile:pctNow, ccc_bb_gap_bp:gapNow,
     credit_regime:currentRegimeClass||'unknown',
   };
+  // Include the data actually visible on screen for the active sub-view
+  if(activeSub==='spreads'&&ffStrip.length){
+    ctx.zq_calendar_spreads=spreadMatrix(ffStrip);
+    ctx.zq_strip=ffStrip.map(c=>({symbol:c.symbol,implied_rate_pct:c.implied_rate,expiry:c.expiry instanceof Date?c.expiry.toISOString().slice(0,10):c.expiry}));
+  }
+  if(activeSub==='sofr'&&sofrStrip.length){
+    ctx.sr3_strip=sofrStrip.map(c=>({symbol:c.symbol,implied_rate_pct:c.implied_rate,expiry:c.expiry instanceof Date?c.expiry.toISOString().slice(0,10):c.expiry}));
+  }
+  if(activeSub==='ff'&&ffStrip.length){
+    ctx.zq_strip=ffStrip.map(c=>({symbol:c.symbol,implied_rate_pct:c.implied_rate,expiry:c.expiry instanceof Date?c.expiry.toISOString().slice(0,10):c.expiry}));
+  }
+  if((activeSub==='path'||activeSub==='cblvl')&&ffStrip.length){
+    ctx.fomc_path=path.map(p=>({meeting:p.date instanceof Date?p.date.toISOString().slice(0,10):p.date,post_meeting_rate_pct:p.rate,cum_cuts:p.cum_cuts}));
+  }
+  return ctx;
 }
 function updateLearnCtx() {
   document.getElementById('ctx-pre').textContent=JSON.stringify(getDashCtx(),null,2);
