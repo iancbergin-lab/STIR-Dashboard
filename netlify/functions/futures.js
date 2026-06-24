@@ -66,10 +66,14 @@ async function fetchAgg(ticker, fromDate, toDate, apiKey) {
   const json = await res.json();
   const rows = json.results || json.result || [];
   if (!rows.length) return null;
-  // Field names follow Polygon convention: c = close, v = volume
-  const close = rows[0].settlement_price ?? rows[0].close;
-  if (close == null) return null;
-  return { settle: +close, implied_rate: +(100 - close).toFixed(5) };
+  const raw = rows[0].settlement_price ?? rows[0].close;
+  if (raw == null) return null;
+  // Futures prices trade > 80 (e.g. 96.37); implied rates are < 15 (e.g. 3.63).
+  // Massive occasionally returns the rate directly — normalise either way.
+  const isPrice = +raw > 50;
+  const settle       = isPrice ? +raw            : +(100 - raw);
+  const implied_rate = isPrice ? +(100 - raw).toFixed(5) : +parseFloat(raw).toFixed(5);
+  return { settle, implied_rate };
 }
 
 exports.handler = async (event) => {
