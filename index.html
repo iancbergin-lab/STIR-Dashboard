@@ -850,7 +850,7 @@ async function loadFeed(force=false) {
   const status = document.getElementById('feed-status');
   list.innerHTML = '<div class="feed-loading">Loading posts…</div>';
   try {
-    const res = await fetch('/.netlify/functions/tweets');
+    const res = await fetch(window.location.origin + '/.netlify/functions/tweets');
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const posts = await res.json();
     feedLoaded = true;
