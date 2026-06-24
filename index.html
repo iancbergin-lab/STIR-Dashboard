@@ -323,8 +323,8 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
       <div class="stat-row" id="rr-stats" style="display:none"></div>
       <div class="legend">
         <span class="leg"><span class="swatch" style="background:#fe7c04"></span>Implied real path</span>
-        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#666 0,#666 4px,transparent 4px,transparent 8px)"></span>Spot real</span>
-        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#2a2a2a 0,#2a2a2a 3px,transparent 3px,transparent 6px)"></span>0% real</span>
+        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#888 0,#888 4px,transparent 4px,transparent 8px)"></span>Spot real</span>
+        <span class="leg"><span class="swatch" style="background:repeating-linear-gradient(90deg,#555 0,#555 3px,transparent 3px,transparent 6px)"></span>0% real</span>
       </div>
       <div class="chart-wrap" style="height:260px"><canvas id="c-rr"></canvas></div>
       <div class="footnote" id="rr-footnote"></div>
@@ -350,18 +350,18 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
         <button class="subtab" onclick="switchCredit('regime')">OAS vs Cuts</button>
       </div>
       <div id="cr-oas" class="sub-panel active">
-        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>HY OAS</span><span class="leg"><span class="swatch" style="background:#3d2510"></span>IG OAS</span></div>
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>HY OAS</span><span class="leg"><span class="swatch" style="background:#888"></span>IG OAS</span></div>
         <div class="chart-wrap" style="height:220px"><canvas id="c-oas"></canvas></div>
         <div id="pct-wrap"></div>
         <div class="footnote">Level alone is slow. Watch rate-of-change for regime shifts. IG overlay distinguishes isolated HY stress from broad market stress.</div>
       </div>
       <div id="cr-roc" class="sub-panel">
-        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>5-day Δ (orange=widening)</span><span class="leg"><span class="swatch" style="background:#3d2510"></span>20-day Δ</span></div>
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#fe7c04"></span>5-day Δ (orange=widening)</span><span class="leg"><span class="swatch" style="background:#7a3a10"></span>20-day Δ</span></div>
         <div class="chart-wrap" style="height:220px"><canvas id="c-roc"></canvas></div>
         <div class="footnote">5d move ≥+30bp warrants attention. 20d turning positive and accelerating = regime shift not a wobble.</div>
       </div>
       <div id="cr-quality" class="sub-panel">
-        <div class="legend"><span class="leg"><span class="swatch" style="background:#e24b4a"></span>CCC OAS</span><span class="leg"><span class="swatch" style="background:#fe7c04"></span>BB OAS</span><span class="leg"><span class="swatch" style="background:#555;border-top:1px dashed #555"></span>CCC−BB gap</span></div>
+        <div class="legend"><span class="leg"><span class="swatch" style="background:#e24b4a"></span>CCC OAS</span><span class="leg"><span class="swatch" style="background:#fe7c04"></span>BB OAS</span><span class="leg"><span class="swatch" style="background:#888;border-top:1px dashed #888"></span>CCC−BB gap</span></div>
         <div class="chart-wrap" style="height:240px"><canvas id="c-quality"></canvas></div>
         <div class="footnote">CCC−BB widening = capital discriminating, exiting weakest credits first. Earliest available credit stress signal.</div>
       </div>
@@ -1085,8 +1085,8 @@ function renderRealRates(be) {
     type:'line',
     data:{labels, datasets:[
       {data:realPath, borderColor:'#fe7c04', borderWidth:2.5, pointBackgroundColor:'#000', pointBorderColor:'#fe7c04', pointBorderWidth:2, pointRadius:5, tension:0, stepped:'before', fill:false, label:'Real path'},
-      {data:path.map(()=>spotReal), borderColor:'#555', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false},
-      {data:path.map(()=>0), borderColor:'#222', borderWidth:1, borderDash:[3,5], pointRadius:0, fill:false},
+      {data:path.map(()=>spotReal), borderColor:'#888', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false},
+      {data:path.map(()=>0), borderColor:'#555', borderWidth:1, borderDash:[3,5], pointRadius:0, fill:false},
     ]},
     options:{
       ...baseOpts('Implied real rate (%)'),
@@ -1161,7 +1161,7 @@ async function loadCredit() {
   if(charts.oas)charts.oas.destroy();
   charts.oas=new Chart(document.getElementById('c-oas').getContext('2d'),{type:'line',data:{labels:labs,datasets:[
     {data:hyV,borderColor:'#fe7c04',borderWidth:2,pointRadius:0,tension:0.2,fill:false},
-    {data:igV,borderColor:'#3d2510',borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
+    {data:igV,borderColor:'#888',borderWidth:1.5,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
   ]},options:baseOpts('HY OAS (bp)','IG OAS (bp)')});
   const pctColor=pctNow>75?'#e24b4a':pctNow>50?'#fe7c04':'#00e676';
   document.getElementById('pct-wrap').innerHTML=`<div class="pct-label">252-day percentile — where today's spread sits in its trailing year range</div><div class="pct-bar-bg"><div class="pct-bar-fill" style="width:${pctNow}%;background:${pctColor}"></div></div><div class="pct-val">${pctNow}th · low ${Math.min(...hyV)}bp · high ${Math.max(...hyV)}bp · today ${hyNow}bp${usingSynth?' · synthetic':''}</div>`;
@@ -1171,7 +1171,7 @@ async function loadCredit() {
   if(charts.roc)charts.roc.destroy();
   charts.roc=new Chart(document.getElementById('c-roc').getContext('2d'),{type:'bar',data:{labels:labs,datasets:[
     {data:d5a,backgroundColor:d5a.map(v=>v===null?'transparent':v>0?'#fe7c04':'#00a050'),borderWidth:0},
-    {data:d20a,backgroundColor:d20a.map(v=>v===null?'transparent':v>0?'#3d2510':'#004020'),borderWidth:0}
+    {data:d20a,backgroundColor:d20a.map(v=>v===null?'transparent':v>0?'#7a3a10':'#006030'),borderWidth:0}
   ]},options:baseOpts('OAS change (bp)')});
 
   // Chart 3: Quality
@@ -1179,7 +1179,7 @@ async function loadCredit() {
   charts.quality=new Chart(document.getElementById('c-quality').getContext('2d'),{type:'line',data:{labels:labs,datasets:[
     {data:cccV,borderColor:'#e24b4a',borderWidth:1.5,pointRadius:0,tension:0.2,fill:false},
     {data:bbV,borderColor:'#fe7c04',borderWidth:1.5,pointRadius:0,tension:0.2,fill:false},
-    {data:gapArr,borderColor:'#555',borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
+    {data:gapArr,borderColor:'#888',borderWidth:1.5,borderDash:[4,4],pointRadius:0,tension:0.2,fill:false,yAxisID:'y2'}
   ]},options:baseOpts('OAS (bp)','CCC−BB gap (bp)')});
 
   // FIX #4: Regime overlay — both series on same historical trailing window
