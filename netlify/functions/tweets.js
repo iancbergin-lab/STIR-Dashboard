@@ -1,53 +1,48 @@
-// Twitter/X feed proxy — uses Apify's tweet-scraper actor.
+// Twitter/X feed proxy — Apify tweet-scraper (async mode).
+// First call triggers a new run and returns whatever the last run produced.
+// Subsequent calls within 5 min return cached data from the last run.
 // GET /.netlify/functions/tweets  →  [{ account, text, date, url }]
 
 const ACCOUNTS = ['Globalflows', 'conksresearch'];
+const ACTOR = 'apidojo~tweet-scraper';
+const BASE  = 'https://api.apify.com/v2';
 
 exports.handler = async () => {
   const apiKey = process.env.APIFY_API_KEY;
   if (!apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'APIFY_API_KEY not configured' }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: 'APIFY_API_KEY not configured' }) };
   }
 
-  const startUrls = ACCOUNTS.map(a => `https://x.com/${a}`);
+  // 1. Kick off a new async run (fire-and-forget — don't wait for it)
+  fetch(`${BASE}/acts/${ACTOR}/runs?token=${apiKey}&memory=256`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      startUrls: ACCOUNTS.map(a => `https://x.com/${a}`),
+      maxItems: 20,
+      addUserInfo: false,
+    }),
+  }).catch(e => console.warn('[tweets] run trigger failed:', e.message));
 
-  // Run actor synchronously and return dataset items in one call.
-  // memory=256 keeps it on the free tier; timeout=45s is generous for 2 accounts.
-  const runUrl =
-    `https://api.apify.com/v2/acts/apidojo~tweet-scraper/run-sync-get-dataset-items` +
-    `?token=${apiKey}&timeout=45&memory=256`;
-
-  let items;
+  // 2. Read dataset from the LAST SUCCEEDED run — usually instant
+  let items = [];
   try {
-    const res = await fetch(runUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        startUrls,
-        maxItems: 20,
-        addUserInfo: false,
-      }),
-      signal: AbortSignal.timeout(50000),
-    });
-    if (!res.ok) {
+    const res = await fetch(
+      `${BASE}/acts/${ACTOR}/runs/last/dataset/items?token=${apiKey}&status=SUCCEEDED&limit=20`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    console.log('[tweets] dataset fetch status:', res.status);
+    if (res.ok) {
+      const data = await res.json();
+      console.log('[tweets] raw items from last run:', Array.isArray(data) ? data.length : typeof data);
+      items = Array.isArray(data) ? data : [];
+    } else {
       const txt = await res.text();
-      console.error(`[tweets] Apify error ${res.status}: ${txt}`);
-      return { statusCode: 502, body: JSON.stringify({ error: `Apify ${res.status}` }) };
+      console.error('[tweets] dataset error:', txt.slice(0, 300));
     }
-    items = await res.json();
   } catch (e) {
-    console.error(`[tweets] fetch failed: ${e.message}`);
-    return { statusCode: 502, body: JSON.stringify({ error: e.message }) };
+    console.error('[tweets] fetch error:', e.message);
   }
-
-  if (!Array.isArray(items)) {
-    console.error(`[tweets] unexpected Apify response: ${JSON.stringify(items).slice(0,300)}`);
-    items = [];
-  }
-  console.log(`[tweets] Apify returned ${items.length} raw items`);
 
   const posts = items
     .filter(t => t.fullText || t.text)
