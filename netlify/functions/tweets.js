@@ -35,6 +35,10 @@ exports.handler = async () => {
     if (res.ok) {
       const data = await res.json();
       console.log('[tweets] raw items from last run:', Array.isArray(data) ? data.length : typeof data);
+      if (Array.isArray(data) && data.length) {
+        console.log('[tweets] first item keys:', Object.keys(data[0]).join(', '));
+        console.log('[tweets] first item sample:', JSON.stringify(data[0]).slice(0, 400));
+      }
       items = Array.isArray(data) ? data : [];
     } else {
       const txt = await res.text();
