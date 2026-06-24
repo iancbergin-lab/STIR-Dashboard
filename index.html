@@ -380,11 +380,11 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
     <div class="feed-header">
       <span class="feed-title">Analyst Feed</span>
       <span class="feed-accounts">@Globalflows · @conksresearch</span>
+      <span id="feed-status" style="font-size:9px;color:#666;margin-left:6px"></span>
       <button class="feed-refresh" onclick="loadFeed(true)">↻ Refresh</button>
     </div>
-    <div id="feed-status" class="status-bar"></div>
     <div id="feed-list"><div class="feed-loading">Loading posts…</div></div>
-    <div class="footnote" style="margin-top:12px">Posts fetched via RSS bridge · Cached 5 min · Click any post to open on X</div>
+    <div class="footnote" style="margin-top:12px">Posts via SocialData · Cached 5 min · Click any post to open on X</div>
   </div>
 
   <!-- ALERTS DRAWER -->
@@ -857,7 +857,8 @@ async function loadFeed(force=false) {
     feedLoaded = true;
     list.innerHTML = posts.map(p => {
       const ago = relTime(p.date);
-      const safe = p.text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const clean = p.text.replace(/https:\/\/t\.co\/\S+/g,'').replace(/\s{2,}/g,' ').trim();
+      const safe = clean.replace(/</g,'&lt;').replace(/>/g,'&gt;');
       return `<div class="feed-item" onclick="window.open('${p.url||'https://x.com/'+p.account}','_blank')">
         <div class="feed-meta">
           <span class="feed-account">@${p.account}</span>
@@ -883,7 +884,7 @@ async function loadFeed(force=false) {
         }, 100);
       });
     });
-    status.innerHTML = `<span style="color:#00e676">●</span> ${posts.length} posts loaded`;
+    status.textContent = `· ${posts.length} posts`;
   } catch(e) {
     list.innerHTML = `<div class="feed-loading">Failed to load feed: ${e.message}</div>`;
     status.innerHTML = `<span style="color:#e24b4a">●</span> Feed unavailable`;
