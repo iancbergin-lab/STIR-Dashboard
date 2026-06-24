@@ -162,6 +162,21 @@ table.spread td { padding: 5px 8px; text-align: right; border-bottom: 0.5px soli
 table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
 .pos { color: #00e676; } .neg { color: #fe7c04; } .neu { color: #d0d0d0; }
 
+/* ── Feed tab ── */
+.feed-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.feed-title { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #fe7c04; }
+.feed-accounts { font-size: 10px; color: #888; }
+.feed-refresh { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border: 1px solid #3d2510; border-radius: 3px; background: #0a0400; color: #fe7c04; font-family: inherit; padding: 3px 10px; margin-left: auto; }
+.feed-loading { font-size: 11px; color: #888; padding: 20px 0; }
+.feed-item { border: 1px solid #1a1a1a; border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.12s; background: #060606; }
+.feed-item:hover { border-color: #3d2510; }
+.feed-meta { display: flex; gap: 10px; align-items: center; margin-bottom: 5px; }
+.feed-account { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #fe7c04; }
+.feed-date { font-size: 9px; color: #666; }
+.feed-text { font-size: 11px; line-height: 1.7; color: #ccc; white-space: pre-wrap; }
+.feed-ask { font-size: 9px; color: #555; margin-top: 6px; }
+.feed-item:hover .feed-ask { color: #fe7c04; }
+
 /* ── BE badge ── */
 .be-badge { display: inline-flex; align-items: center; gap: 8px; background: #080808; border: 1px solid #1e1008; border-radius: 4px; padding: 5px 12px; margin-bottom: 10px; }
 .be-badge .lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: #888; }
@@ -261,6 +276,7 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
       <button class="nav-tab" onclick="switchTab('meetings')">Meetings</button>
       <button class="nav-tab" onclick="switchTab('realrates')">Real Rates</button>
       <button class="nav-tab" onclick="switchTab('credit')">Credit</button>
+      <button class="nav-tab" onclick="switchTab('feed')">Feed</button>
     </div>
 
     <!-- PRODUCTS -->
@@ -357,6 +373,18 @@ table.spread td:first-child { text-align: left; color: #aaa; font-size: 10px; }
         <div class="footnote" id="cr-regime-read"></div>
       </div>
     </div>
+  </div>
+
+  <!-- FEED -->
+  <div id="tab-feed" class="tab-panel">
+    <div class="feed-header">
+      <span class="feed-title">Analyst Feed</span>
+      <span class="feed-accounts">@Globalflows · @conksresearch</span>
+      <button class="feed-refresh" onclick="loadFeed(true)">↻ Refresh</button>
+    </div>
+    <div id="feed-status" class="status-bar"></div>
+    <div id="feed-list"><div class="feed-loading">Loading posts…</div></div>
+    <div class="footnote" style="margin-top:12px">Posts fetched via RSS bridge · Cached 5 min · Click any post to open on X</div>
   </div>
 
   <!-- ALERTS DRAWER -->
@@ -808,9 +836,68 @@ function runAlertChecks(hyV, hyNow, d5, d20, pct, gapNow, gapD5, be, spotReal, p
 function switchTab(t) {
   currentTab = t;
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nav-tab').forEach((b,i)=>b.classList.toggle('active',['products','meetings','realrates','credit'][i]===t));
+  document.querySelectorAll('.nav-tab').forEach((b,i)=>b.classList.toggle('active',['products','meetings','realrates','credit','feed'][i]===t));
   document.getElementById('tab-'+t).classList.add('active');
+  if(t==='feed' && !feedLoaded) loadFeed();
   updateLearnCtx();
+}
+
+let feedLoaded = false;
+
+async function loadFeed(force=false) {
+  if(feedLoaded && !force) return;
+  const list = document.getElementById('feed-list');
+  const status = document.getElementById('feed-status');
+  list.innerHTML = '<div class="feed-loading">Loading posts…</div>';
+  try {
+    const res = await fetch('/.netlify/functions/tweets');
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const posts = await res.json();
+    feedLoaded = true;
+    if(!posts.length) { list.innerHTML='<div class="feed-loading">No posts returned — RSS bridge may be unavailable.</div>'; return; }
+    list.innerHTML = posts.map(p => {
+      const ago = relTime(p.date);
+      const safe = p.text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div class="feed-item" onclick="window.open('${p.url||'https://x.com/'+p.account}','_blank')">
+        <div class="feed-meta">
+          <span class="feed-account">@${p.account}</span>
+          <span class="feed-date">${ago}</span>
+        </div>
+        <div class="feed-text">${safe}</div>
+        <div class="feed-ask">▸ Ask the dashboard about this</div>
+      </div>`;
+    }).join('');
+    // Wire "Ask about this" clicks
+    list.querySelectorAll('.feed-item').forEach((el,i) => {
+      el.querySelector('.feed-ask').addEventListener('click', ev => {
+        ev.stopPropagation();
+        const txt = posts[i].text;
+        switchTab('products');
+        setTimeout(()=>{
+          document.getElementById('learn-btn')?.click() || toggleLearn();
+          setTimeout(()=>{
+            switchLearnMode('qa');
+            const inp = document.getElementById('chat-input');
+            if(inp){ inp.value=`@${posts[i].account} posted: "${txt.slice(0,300)}"\n\nHow does this relate to what I'm seeing on the dashboard?`; inp.focus(); }
+          }, 150);
+        }, 100);
+      });
+    });
+    status.innerHTML = `<span style="color:#00e676">●</span> ${posts.length} posts loaded`;
+  } catch(e) {
+    list.innerHTML = `<div class="feed-loading">Failed to load feed: ${e.message}</div>`;
+    status.innerHTML = `<span style="color:#e24b4a">●</span> Feed unavailable`;
+  }
+}
+
+function relTime(dateStr) {
+  if(!dateStr) return '';
+  const d = new Date(dateStr); if(isNaN(d)) return dateStr;
+  const diff = (Date.now() - d) / 1000;
+  if(diff < 60) return `${Math.round(diff)}s ago`;
+  if(diff < 3600) return `${Math.round(diff/60)}m ago`;
+  if(diff < 86400) return `${Math.round(diff/3600)}h ago`;
+  return `${Math.round(diff/86400)}d ago`;
 }
 function switchProduct(p) {
   currentProduct=p;
