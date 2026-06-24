@@ -2,15 +2,17 @@
 // GET /.netlify/functions/tweets  →  [{ account, text, date, url }]
 
 const ACCOUNTS = ['Globalflows', 'conksresearch'];
-const BASE = 'https://api.socialdata.tools/twitter/user/timeline';
+const BASE = 'https://api.socialdata.tools/twitter/search';
 
 async function fetchAccount(account, apiKey) {
-  const res = await fetch(`${BASE}?username=${account}&type=tweets`, {
+  const query = encodeURIComponent(`from:${account}`);
+  const res = await fetch(`${BASE}?query=${query}&type=Latest`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) {
-    console.error(`[tweets] ${account} → HTTP ${res.status}`);
+    const txt = await res.text();
+    console.error(`[tweets] ${account} → HTTP ${res.status}: ${txt.slice(0,200)}`);
     return [];
   }
   const data = await res.json();
