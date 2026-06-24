@@ -1,10 +1,8 @@
-// Twitter/X feed proxy — Apify tweet-scraper (async mode).
-// First call triggers a new run and returns whatever the last run produced.
-// Subsequent calls within 5 min return cached data from the last run.
+// Twitter/X feed proxy — Apify twitter-user-scraper actor.
 // GET /.netlify/functions/tweets  →  [{ account, text, date, url }]
 
 const ACCOUNTS = ['Globalflows', 'conksresearch'];
-const ACTOR = 'apidojo~tweet-scraper';
+const ACTOR = 'apidojo~twitter-user-scraper';
 const BASE  = 'https://api.apify.com/v2';
 
 exports.handler = async () => {
@@ -13,48 +11,49 @@ exports.handler = async () => {
     return { statusCode: 500, body: JSON.stringify({ error: 'APIFY_API_KEY not configured' }) };
   }
 
-  // 1. Kick off a new async run (fire-and-forget — don't wait for it)
+  // Fire-and-forget: trigger a fresh run for next time
   fetch(`${BASE}/acts/${ACTOR}/runs?token=${apiKey}&memory=256`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      startUrls: ACCOUNTS.map(a => `https://x.com/${a}`),
-      maxItems: 20,
-      addUserInfo: false,
+      usernames: ACCOUNTS,
+      tweetsDesired: 10,
     }),
   }).catch(e => console.warn('[tweets] run trigger failed:', e.message));
 
-  // 2. Read dataset from the LAST SUCCEEDED run — usually instant
+  // Read dataset from last succeeded run
   let items = [];
   try {
     const res = await fetch(
-      `${BASE}/acts/${ACTOR}/runs/last/dataset/items?token=${apiKey}&status=SUCCEEDED&limit=20`,
+      `${BASE}/acts/${ACTOR}/runs/last/dataset/items?token=${apiKey}&status=SUCCEEDED&limit=30`,
       { signal: AbortSignal.timeout(8000) }
     );
-    console.log('[tweets] dataset fetch status:', res.status);
+    console.log('[tweets] dataset status:', res.status);
     if (res.ok) {
       const data = await res.json();
-      console.log('[tweets] raw items from last run:', Array.isArray(data) ? data.length : typeof data);
+      console.log('[tweets] items:', Array.isArray(data) ? data.length : typeof data);
       if (Array.isArray(data) && data.length) {
-        console.log('[tweets] first item keys:', Object.keys(data[0]).join(', '));
-        console.log('[tweets] first item sample:', JSON.stringify(data[0]).slice(0, 400));
+        console.log('[tweets] keys:', Object.keys(data[0]).join(', '));
+        console.log('[tweets] sample:', JSON.stringify(data[0]).slice(0, 400));
       }
       items = Array.isArray(data) ? data : [];
-    } else {
-      const txt = await res.text();
-      console.error('[tweets] dataset error:', txt.slice(0, 300));
     }
   } catch (e) {
-    console.error('[tweets] fetch error:', e.message);
+    console.error('[tweets] error:', e.message);
   }
 
   const posts = items
-    .filter(t => t.fullText || t.text)
+    .filter(t => !t.noResults)
     .map(t => {
-      const account = (t.author?.userName || t.authorId || '').replace(/^@/, '');
-      const text = (t.fullText || t.text || '').trim();
-      const url = t.url || (t.id ? `https://x.com/${account}/status/${t.id}` : '');
-      const date = t.createdAt || '';
+      // Try all known field name variants across Apify actors
+      const text = (t.fullText || t.full_text || t.text || t.body || '').trim();
+      const account = (
+        t.author?.userName || t.author?.username ||
+        t.user?.screen_name || t.username || t.authorName || ''
+      ).replace(/^@/, '');
+      const url = t.url || t.tweetUrl || t.tweet_url ||
+        (t.id || t.id_str ? `https://x.com/${account}/status/${t.id || t.id_str}` : '');
+      const date = t.createdAt || t.created_at || t.date || '';
       return { account, text, url, date };
     })
     .filter(p => p.text && !p.text.startsWith('RT @'));
@@ -67,10 +66,7 @@ exports.handler = async () => {
 
   return {
     statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'public, max-age=300',
-    },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
     body: JSON.stringify(posts.slice(0, 16)),
   };
 };
