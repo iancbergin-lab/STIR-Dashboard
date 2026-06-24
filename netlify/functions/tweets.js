@@ -12,7 +12,7 @@ exports.handler = async () => {
     };
   }
 
-  const startUrls = ACCOUNTS.map(a => ({ url: `https://x.com/${a}` }));
+  const startUrls = ACCOUNTS.map(a => `https://x.com/${a}`);
 
   // Run actor synchronously and return dataset items in one call.
   // memory=256 keeps it on the free tier; timeout=45s is generous for 2 accounts.
@@ -43,7 +43,11 @@ exports.handler = async () => {
     return { statusCode: 502, body: JSON.stringify({ error: e.message }) };
   }
 
-  if (!Array.isArray(items)) items = [];
+  if (!Array.isArray(items)) {
+    console.error(`[tweets] unexpected Apify response: ${JSON.stringify(items).slice(0,300)}`);
+    items = [];
+  }
+  console.log(`[tweets] Apify returned ${items.length} raw items`);
 
   const posts = items
     .filter(t => t.fullText || t.text)
